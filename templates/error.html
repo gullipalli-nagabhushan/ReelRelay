@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block title %}Something went wrong — {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="error-shell">
+    <div class="error-card">
+        <span class="error-icon"><i class="bi bi-exclamation-triangle"></i></span>
+        <p class="section-kicker">Download interrupted</p>
+        <h1>That did not work.</h1>
+        <div class="error-message">
+            <i class="bi bi-x-octagon"></i>
+            <span>{{ error }}</span>
+        </div>
+        {% if hint %}
+        <p class="error-hint">{{ hint }}</p>
+        {% endif %}
+
+        <div class="error-tips">
+            <h2>Quick checks</h2>
+            <ul>
+                <li><i class="bi bi-check2"></i> Reload the preview — media links expire after a few hours.</li>
+                <li><i class="bi bi-check2"></i> Make sure the post is public, not private or members-only.</li>
+                <li><i class="bi bi-check2"></i> Age-restricted or login-only media needs a cookies file on the server.</li>
+                <li><i class="bi bi-check2"></i> 4K muxing and MP3/FLAC/WAV conversion need ffmpeg installed.</li>
+                <li><i class="bi bi-check2"></i> If the server is busy, wait for another download to finish.</li>
+            </ul>
+        </div>
+
+        <div class="error-actions">
+            <a href="/" class="btn btn-primary"><i class="bi bi-link-45deg"></i> Try another link</a>
+            <button type="button" class="btn btn-soft" onclick="history.back()"><i class="bi bi-arrow-left"></i> Go back</button>
+        </div>
+    </div>
+</div>
+{% endblock %}

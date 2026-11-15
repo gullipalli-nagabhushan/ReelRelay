@@ -1,0 +1,74 @@
+"""Runtime configuration.
+
+Everything can be tuned with environment variables so the app can be deployed
+without touching the code. Sensible defaults are used for local development.
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+
+try:  # optional: load a local .env file when python-dotenv is present
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - the app works without it
+    load_dotenv = None
+
+if load_dotenv is not None:
+    load_dotenv()
+
+APP_NAME = "ReelRelay"
+APP_VERSION = "3.0.0"
+APP_TAGLINE = "YouTube · Instagram · Facebook, straight to your device"
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+# Highest video resolution offered (YouTube can serve 4320p / 8K).
+MAX_VIDEO_HEIGHT = max(144, min(_env_int("MAX_VIDEO_HEIGHT", 2160), 4320))
+# How many downloads may stream at the same time.
+MAX_CONCURRENT_DOWNLOADS = max(1, _env_int("MAX_CONCURRENT_DOWNLOADS", 4))
+
+# yt-dlp metadata cache (avoids re-extracting between preview and download).
+INFO_CACHE_TTL = max(30, _env_int("INFO_CACHE_TTL", 600))
+INFO_CACHE_SIZE = max(8, _env_int("INFO_CACHE_SIZE", 64))
+
+# Optional yt-dlp extras (age-restricted videos, geo blocks, proxies).
+COOKIES_FILE = os.getenv("YTDLP_COOKIES_FILE") or None
+PROXY = os.getenv("YTDLP_PROXY") or None
+
+# System binaries. ffmpeg is required for 4K merging and audio conversion.
+FFMPEG = os.getenv("FFMPEG_BINARY") or shutil.which("ffmpeg")
+FFPROBE = os.getenv("FFPROBE_BINARY") or shutil.which("ffprobe")
+FFMPEG_OK = bool(FFMPEG)
+
+# Fallback user agent, only used when a format does not expose its own headers.
+DEFAULT_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+)
+
+# Used to build a friendly legal / yt-dlp referer header for streaming.
+YOUTUBE_REFERER = "https://www.youtube.com/"
+
+
+def summary() -> dict:
+    """Small diagnostic payload used by /health and the startup log."""
+    return {
+        "app": APP_NAME,
+        "version": APP_VERSION,
+        "ffmpeg": FFMPEG or None,
+        "ffmpeg_available": FFMPEG_OK,
+        "max_height": MAX_VIDEO_HEIGHT,
+        "max_concurrent_downloads": MAX_CONCURRENT_DOWNLOADS,
+        "cookies_configured": bool(COOKIES_FILE),
+        "proxy_configured": bool(PROXY),
+    }

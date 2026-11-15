@@ -1,0 +1,743 @@
+{% extends "base.html" %}
+
+{% block title %}{{ media.song_title if media.is_music else media.title }} — Download{% endblock %}
+
+{% block content %}
+<section class="preview-shell"
+         id="previewShell"
+         data-video-url="{{ media.input_url }}">
+
+    <div class="preview-topbar">
+        <a href="/" class="btn btn-ghost">
+            <i class="bi bi-arrow-left"></i> New link
+        </a>
+        <div class="preview-topmeta">
+            <span class="chip chip-strong"><i class="bi bi-play-btn"></i> {{ media.platform_label }}</span>
+            <span class="chip"><i class="bi bi-badge-hd"></i> {{ media.max_quality }} available</span>
+            {% if media.audio_source != "—" %}<span class="chip"><i class="bi bi-soundwave"></i> {{ media.audio_source }}</span>{% endif %}
+            {% if media.has_hdr %}<span class="chip"><i class="bi bi-brightness-high"></i> HDR</span>{% endif %}
+            {% if media.has_60fps %}<span class="chip"><i class="bi bi-speedometer2"></i> 60 fps</span>{% endif %}
+        </div>
+    </div>
+
+    <article class="media-card">
+        <div class="cover-wrap{% if media.vertical %} cover-wrap-vertical{% endif %}">
+            {% if media.thumbnail %}
+            <img src="{{ media.thumbnail }}" alt="Cover art for {{ media.song_title if media.is_music else media.title }}"
+                 class="cover-image" referrerpolicy="no-referrer">
+            {% else %}
+            <div class="cover-placeholder"><i class="bi bi-music-note-beamed"></i></div>
+            {% endif %}
+            <div class="cover-shine" aria-hidden="true"></div>
+            <div class="cover-topline">
+                <span class="cover-pill">{{ media.max_quality }}</span>
+                {% if media.is_music %}<span class="cover-pill cover-pill-soft"><i class="bi bi-music-note"></i> Music</span>{% endif %}
+            </div>
+            <div class="cover-bottomline">
+                <span class="cover-duration">{{ media.duration_formatted }}</span>
+            </div>
+        </div>
+
+        <div class="media-body">
+            <p class="media-artist">{{ media.artist }}</p>
+            <h1 class="media-title">{{ media.song_title if media.is_music else media.title }}</h1>
+            {% if media.is_music and media.title and media.title|lower != media.song_title|lower %}
+            <p class="media-subtitle">{{ media.title }}</p>
+            {% endif %}
+
+            <div class="meta-stats">
+                <div class="meta-stat">
+                    <i class="bi bi-person-circle"></i>
+                    <div><span>{{ media.channel_label }}</span><strong>{{ media.channel }}</strong></div>
+                </div>
+                {% if media.view_count %}
+                <div class="meta-stat">
+                    <i class="bi bi-eye"></i>
+                    <div><span>Views</span><strong>{{ media.view_count_formatted }}</strong></div>
+                </div>
+                {% endif %}
+                {% if media.like_count %}
+                <div class="meta-stat">
+                    <i class="bi bi-heart"></i>
+                    <div><span>Likes</span><strong>{{ media.like_count_formatted }}</strong></div>
+                </div>
+                {% endif %}
+                {% if media.upload_date_formatted %}
+                <div class="meta-stat">
+                    <i class="bi bi-calendar3"></i>
+                    <div><span>Published</span><strong>{{ media.upload_date_formatted }}</strong></div>
+                </div>
+                {% endif %}
+            </div>
+
+            <div class="media-actions">
+                {% if media.is_youtube %}
+                <button class="btn btn-soft" type="button" data-bs-toggle="collapse" data-bs-target="#embedPreview"
+                        aria-expanded="false" aria-controls="embedPreview">
+                    <i class="bi bi-play-circle"></i> Watch preview
+                </button>
+                {% endif %}
+                <a class="btn btn-soft" href="{{ media.webpage_url }}" target="_blank" rel="noopener noreferrer">
+                    <i class="bi bi-box-arrow-up-right"></i> Open original
+                </a>
+            </div>
+
+            {% if media.is_youtube %}
+            <div class="collapse embed-collapse" id="embedPreview">
+                <div class="ratio ratio-16x9">
+                    <iframe src="https://www.youtube-nocookie.com/embed/{{ media.video_id }}"
+                            title="YouTube preview" loading="lazy"
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                            referrerpolicy="strict-origin-when-cross-origin"
+                            allowfullscreen></iframe>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </article>
+
+    <section class="download-card">
+        <header class="download-header">
+            <div>
+                <p class="section-kicker"><i class="bi bi-download"></i> Downloads</p>
+                <h2>Choose a format</h2>
+                <p class="download-sub">
+                    Files stream directly to your device. Larger formats may take a few seconds to produce
+                    their first bytes while ffmpeg prepares them.
+                </p>
+            </div>
+            <div class="stream-badge">
+                <i class="bi bi-hdd-network"></i>
+                <span><strong>Zero server storage</strong><small>Nothing is written to disk</small></span>
+            </div>
+        </header>
+
+        {% if not media.ffmpeg_ok %}
+        <div class="notice notice-warning">
+            <i class="bi bi-exclamation-triangle"></i>
+            <div>
+                <strong>ffmpeg is not installed on this server.</strong>
+                Only single-file video streams and the original audio stream are available. Install ffmpeg
+                to unlock muxing, MP3, FLAC, M4A and WAV.
+            </div>
+        </div>
+        {% endif %}
+
+        <ul class="nav nav-pills download-tabs" id="downloadTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="videoTabButton" data-bs-toggle="pill" data-bs-target="#videoTab"
+                        type="button" role="tab" aria-controls="videoTab" aria-selected="true">
+                    <i class="bi bi-camera-video"></i> Video
+                    <span class="tab-count">{{ media.video_options|length }}</span>
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="audioTabButton" data-bs-toggle="pill" data-bs-target="#audioTab"
+                        type="button" role="tab" aria-controls="audioTab" aria-selected="false">
+                    <i class="bi bi-music-note-beamed"></i> Audio &amp; tags
+                    <span class="tab-count">{{ media.audio_options|length }}</span>
+                </button>
+            </li>
+        </ul>
+
+        <div class="tab-content download-tab-content">
+            <div class="tab-pane fade show active" id="videoTab" role="tabpanel" aria-labelledby="videoTabButton">
+                {% if media.video_options %}
+                <div class="option-list">
+                    {% for option in media.video_options %}
+                    <div class="option-row{% if option.recommended %} is-recommended{% endif %}">
+                        <div class="option-quality">
+                            <span class="quality-tier">{{ option.tier }}</span>
+                            <span class="quality-res">{{ option.quality }}</span>
+                            {% if option.vertical %}<span class="quality-mini">Portrait</span>{% endif %}
+                            {% if option.hdr %}<span class="quality-mini">HDR</span>{% endif %}
+                        </div>
+                        <div class="option-body">
+                            <div class="chip-row">
+                                {% for badge in option.badges %}
+                                <span class="chip{% if loop.first %} chip-strong{% endif %}">{{ badge }}</span>
+                                {% endfor %}
+                            </div>
+                            <p class="option-note">
+                                {{ option.note }} · <span>{{ option.size_label }}</span>
+                                {% if option.recommended %}<span class="badge-recommended ms-1">Best all-round</span>{% endif %}
+                            </p>
+                        </div>
+                        <button type="button"
+                                class="btn btn-download download-trigger"
+                                data-kind="video"
+                                data-option="{{ option.id }}"
+                                data-height="{{ option.height }}"
+                                data-container="{{ option.container }}"
+                                data-quality="{{ option.quality }}"
+                                data-label="{{ option.tier }} {{ option.quality }} · {{ option.codec }} · {{ option.container|upper }}"
+                                data-size="{{ option.size_label }}">
+                            <i class="bi bi-download"></i>
+                            <span>Download</span>
+                        </button>
+                    </div>
+                    {% endfor %}
+                </div>
+                <p class="tab-footnote">
+                    <i class="bi bi-info-circle"></i>
+                    MP4 / H.264 plays on virtually everything. VP9 (WebM) and AV1 offer better quality per
+                    byte on modern devices.
+                </p>
+                {% else %}
+                <div class="empty-state">
+                    <i class="bi bi-camera-video-off"></i>
+                    <h3>No video streams available</h3>
+                    <p>This link did not expose a downloadable video stream.</p>
+                </div>
+                {% endif %}
+            </div>
+
+            <div class="tab-pane fade" id="audioTab" role="tabpanel" aria-labelledby="audioTabButton">
+                <div class="tag-editor">
+                    <div class="tag-editor-head">
+                        <div>
+                            <h3><i class="bi bi-pencil-square"></i> Customise the tags</h3>
+                            <p>These values are embedded in the file and used for its filename. Edit anything
+                               the platform got wrong.</p>
+                        </div>
+                        <div class="tag-toggles">
+                            <label class="switch-row">
+                                <input type="checkbox" id="embedTags" checked>
+                                <span class="switch-ui" aria-hidden="true"></span>
+                                <span>Embed tags</span>
+                            </label>
+                            <label class="switch-row">
+                                <input type="checkbox" id="embedCover" checked>
+                                <span class="switch-ui" aria-hidden="true"></span>
+                                <span>Embed cover art</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="tag-grid">
+                        <div class="tag-field tag-field-wide">
+                            <label for="tagTitle">Title</label>
+                            <input type="text" class="form-control" id="tagTitle" maxlength="200"
+                                   value="{{ media.tags.title }}" data-preview="previewTagTitle">
+                        </div>
+                        <div class="tag-field">
+                            <label for="tagArtist">Artist</label>
+                            <input type="text" class="form-control" id="tagArtist" maxlength="200"
+                                   value="{{ media.tags.artist }}" data-preview="previewTagArtist">
+                        </div>
+                        <div class="tag-field">
+                            <label for="tagAlbum">Album</label>
+                            <input type="text" class="form-control" id="tagAlbum" maxlength="200"
+                                   value="{{ media.tags.album }}" placeholder="Single"
+                                   data-preview="previewTagAlbum">
+                        </div>
+                        <div class="tag-field">
+                            <label for="tagComposer">Composer</label>
+                            <input type="text" class="form-control" id="tagComposer" maxlength="200"
+                                   value="{{ media.tags.composer }}" placeholder="Songwriter / composer"
+                                   data-preview="previewTagComposer">
+                        </div>
+                        <div class="tag-field">
+                            <label for="tagYear">Year</label>
+                            <input type="text" class="form-control" id="tagYear" maxlength="4"
+                                   inputmode="numeric" value="{{ media.tags.year }}" placeholder="2026"
+                                   data-preview="previewTagYear">
+                        </div>
+                        <div class="tag-field">
+                            <label for="tagGenre">Genre</label>
+                            <input type="text" class="form-control" id="tagGenre" maxlength="80"
+                                   value="{{ media.tags.genre }}" placeholder="Pop"
+                                   data-preview="previewTagGenre">
+                        </div>
+                        <div class="tag-field">
+                            <label for="tagTrack">Track no.</label>
+                            <input type="text" class="form-control" id="tagTrack" maxlength="8"
+                                   inputmode="numeric" value="{{ media.tags.track }}" placeholder="1">
+                        </div>
+                    </div>
+
+                    <p class="tag-hint">
+                        <i class="bi bi-info-circle"></i>
+                        Tags are written for MP3, FLAC, M4A and WAV. Cover art comes from the video thumbnail.
+                    </p>
+                </div>
+
+                {% if media.audio_options %}
+                {% if not media.has_original_audio %}
+                <div class="notice">
+                    <i class="bi bi-info-circle"></i>
+                    <div>
+                        This link has no standalone audio stream. Converted formats extract the audio
+                        track from the video file, so the original stream option is not offered.
+                    </div>
+                </div>
+                {% endif %}
+                <div class="audio-grid">
+                    {% for option in media.audio_options %}
+                    <article class="audio-card{% if option.recommended %} is-recommended{% endif %}">
+                        <header class="audio-head">
+                            <div>
+                                <span class="audio-format">{{ option.label }}</span>
+                                <span class="audio-detail">{{ option.detail }}</span>
+                            </div>
+                            {% if option.recommended %}<span class="badge-recommended">Recommended</span>{% endif %}
+                        </header>
+                        <p class="audio-desc">{{ option.description }}</p>
+                        <div class="chip-row">
+                            {% for badge in option.badges %}
+                            <span class="chip">{{ badge }}</span>
+                            {% endfor %}
+                            {% if not option.cover %}<span class="chip chip-muted">No cover</span>{% endif %}
+                        </div>
+                        <div class="audio-foot">
+                            <span class="audio-size">{{ option.size_label }}</span>
+                            <button type="button"
+                                    class="btn btn-download download-trigger"
+                                    data-kind="audio"
+                                    data-profile="{{ option.profile }}"
+                                    data-format-id="{{ option.format_id }}"
+                                    data-quality="{{ option.label }} {{ option.detail }}"
+                                    data-label="{{ option.label }} · {{ option.detail }}"
+                                    data-size="{{ option.size_label }}">
+                                <i class="bi bi-download"></i>
+                                <span>.{{ option.ext }}</span>
+                            </button>
+                        </div>
+                    </article>
+                    {% endfor %}
+                </div>
+                <p class="tab-footnote">
+                    <i class="bi bi-info-circle"></i>
+                    Audio source: <strong>{{ media.audio_source }}</strong>. The original stream is a
+                    byte-for-byte copy; converted formats are re-encoded from that source.
+                </p>
+                {% else %}
+                <div class="empty-state">
+                    <i class="bi bi-music-note"></i>
+                    <h3>No audio streams available</h3>
+                    <p>This link did not expose a usable audio stream.</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="download-footer">
+            <span><i class="bi bi-shield-check"></i> Streamed from {{ media.platform_label }} → your browser</span>
+            <span><i class="bi bi-clock-history"></i> Media links expire after a few hours — reload if a download fails</span>
+        </div>
+    </section>
+
+    {% if media.description %}
+    <details class="description-card">
+        <summary><i class="bi bi-text-left"></i> Description <span>from {{ media.platform_label }}</span></summary>
+        <div class="description-content">{{ media.description }}</div>
+    </details>
+    {% endif %}
+</section>
+
+<div class="download-overlay" id="downloadOverlay" hidden>
+    <div class="download-panel" role="dialog" aria-modal="true" aria-labelledby="downloadTitle">
+        <div class="spinner-ring"></div>
+        <p class="download-eyebrow" id="downloadEyebrow"><i class="bi bi-cloud-arrow-down"></i> Preparing download</p>
+        <h2 id="downloadTitle">Getting things ready…</h2>
+        <p class="download-detail" id="downloadDetail">Resolving the media stream.</p>
+        <div class="download-progress is-indeterminate" id="downloadProgress"
+             role="progressbar" aria-valuemin="0" aria-valuemax="100">
+            <span id="downloadBar"></span>
+        </div>
+        <div class="download-metrics">
+            <span id="downloadPercent">—</span>
+            <span id="downloadSize">—</span>
+            <span id="downloadSpeed">—</span>
+        </div>
+        <p class="download-elapsed">
+            <span id="downloadElapsed">0:00</span> elapsed ·
+            <span id="downloadEta">estimating…</span>
+        </p>
+        <a id="downloadFallback" class="download-fallback" href="#" hidden>
+            Nothing happened? Start the download manually
+        </a>
+        <div class="download-actions">
+            <a id="downloadSave" class="btn btn-soft" href="#" hidden>
+                <i class="bi bi-download"></i> Save again
+            </a>
+            <button type="button" class="btn btn-ghost" id="downloadDismiss">Close</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    (function () {
+        const shell = document.getElementById('previewShell');
+        if (!shell) return;
+
+        const videoUrl = shell.dataset.videoUrl;
+        const overlay = document.getElementById('downloadOverlay');
+        const progressWrap = document.getElementById('downloadProgress');
+        const progressBar = document.getElementById('downloadBar');
+        const titleEl = document.getElementById('downloadTitle');
+        const detailEl = document.getElementById('downloadDetail');
+        const eyebrowEl = document.getElementById('downloadEyebrow');
+        const elapsedEl = document.getElementById('downloadElapsed');
+        const etaEl = document.getElementById('downloadEta');
+        const percentEl = document.getElementById('downloadPercent');
+        const sizeEl = document.getElementById('downloadSize');
+        const speedEl = document.getElementById('downloadSpeed');
+        const fallbackEl = document.getElementById('downloadFallback');
+        const saveEl = document.getElementById('downloadSave');
+        const dismissBtn = document.getElementById('downloadDismiss');
+
+        const fieldIds = ['tagTitle', 'tagArtist', 'tagAlbum', 'tagComposer', 'tagGenre', 'tagYear', 'tagTrack'];
+        const paramNames = ['title', 'artist', 'album', 'composer', 'genre', 'year', 'track'];
+
+        let busy = false;
+        let lastButton = null;
+        let token = null;
+        let downloadUrl = null;
+        let pollTimer = null;
+        let clockTimer = null;
+        let autoHide = null;
+        let startedAt = 0;
+        let misses = 0;
+
+        function newToken() {
+            if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+                return window.crypto.randomUUID();
+            }
+            return 't' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+        }
+
+        function formatBytes(bytes) {
+            const value = Number(bytes);
+            if (!value || value < 0) return '0 B';
+            const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+            let size = value;
+            let index = 0;
+            while (size >= 1024 && index < units.length - 1) {
+                size /= 1024;
+                index += 1;
+            }
+            return (index === 0 ? Math.round(size) : size.toFixed(size < 10 ? 1 : 0)) + ' ' + units[index];
+        }
+
+        function formatClock(seconds) {
+            const total = Math.max(0, Math.round(Number(seconds) || 0));
+            const minutes = Math.floor(total / 60);
+            const rest = total % 60;
+            if (minutes >= 60) {
+                const hours = Math.floor(minutes / 60);
+                return hours + ':' + String(minutes % 60).padStart(2, '0') + ':' + String(rest).padStart(2, '0');
+            }
+            return minutes + ':' + String(rest).padStart(2, '0');
+        }
+
+        function collectTags() {
+            const tags = {};
+            fieldIds.forEach((id, index) => {
+                const field = document.getElementById(id);
+                if (!field) return;
+                const value = field.value.trim();
+                if (value) tags[paramNames[index]] = value;
+            });
+            return tags;
+        }
+
+        function updatePreviews() {
+            document.querySelectorAll('[data-preview]').forEach((field) => {
+                const target = document.getElementById(field.dataset.preview);
+                if (!target) return;
+                const value = field.value.trim();
+                target.textContent = value || (field.id === 'tagComposer' ? 'Not listed — add below' : '—');
+            });
+        }
+
+        document.querySelectorAll('[data-preview]').forEach((field) => {
+            field.addEventListener('input', updatePreviews);
+        });
+
+        function clearTimers() {
+            if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+            if (clockTimer) { clearInterval(clockTimer); clockTimer = null; }
+            if (autoHide) { clearTimeout(autoHide); autoHide = null; }
+        }
+
+        function setProgress(percent) {
+            if (!progressWrap || !progressBar) return;
+            if (percent == null) {
+                progressWrap.classList.add('is-indeterminate');
+                progressWrap.classList.remove('is-determinate');
+                progressWrap.removeAttribute('aria-valuenow');
+                progressBar.style.width = '';
+            } else {
+                progressWrap.classList.remove('is-indeterminate');
+                progressWrap.classList.add('is-determinate');
+                progressWrap.setAttribute('aria-valuenow', String(percent));
+                progressBar.style.width = Math.max(0, Math.min(100, percent)) + '%';
+            }
+        }
+
+        function resetOverlay() {
+            if (overlay) {
+                overlay.hidden = true;
+                overlay.classList.remove('is-done', 'is-error');
+            }
+            setProgress(null);
+            if (percentEl) percentEl.textContent = '—';
+            if (sizeEl) sizeEl.textContent = '—';
+            if (speedEl) speedEl.textContent = '—';
+            if (elapsedEl) elapsedEl.textContent = '0:00';
+            if (etaEl) etaEl.textContent = 'estimating…';
+            if (fallbackEl) fallbackEl.hidden = true;
+            if (saveEl) saveEl.hidden = true;
+            busy = false;
+            token = null;
+            downloadUrl = null;
+            if (lastButton) {
+                lastButton.disabled = false;
+                lastButton.classList.remove('is-loading');
+                lastButton = null;
+            }
+        }
+
+        function hideOverlay() {
+            clearTimers();
+            resetOverlay();
+        }
+
+        function showOverlay(button) {
+            busy = true;
+            lastButton = button;
+            startedAt = Date.now();
+            if (autoHide) { clearTimeout(autoHide); autoHide = null; }
+            if (overlay) {
+                overlay.classList.remove('is-done', 'is-error');
+                overlay.hidden = false;
+            }
+            if (titleEl) titleEl.textContent = button.dataset.label || 'Preparing download';
+            if (detailEl) detailEl.textContent = 'Starting ' + (button.dataset.size || 'the download') + ' · ' + (button.dataset.quality || '');
+            if (eyebrowEl) eyebrowEl.innerHTML = '<i class="bi bi-cloud-arrow-down"></i> Preparing download';
+            if (elapsedEl) elapsedEl.textContent = '0:00';
+            if (etaEl) etaEl.textContent = 'estimating…';
+            if (fallbackEl) fallbackEl.hidden = true;
+            if (saveEl) saveEl.hidden = true;
+            setProgress(null);
+
+            if (clockTimer) clearInterval(clockTimer);
+            clockTimer = setInterval(() => {
+                if (!elapsedEl) return;
+                elapsedEl.textContent = formatClock((Date.now() - startedAt) / 1000);
+            }, 1000);
+        }
+
+        function buildParams(button) {
+            const params = new URLSearchParams();
+            params.set('url', videoUrl);
+            params.set('kind', button.dataset.kind || 'video');
+            params.set('token', token);
+
+            if (button.dataset.kind === 'video') {
+                if (button.dataset.option) params.set('option', button.dataset.option);
+                if (button.dataset.height) params.set('height', button.dataset.height);
+                if (button.dataset.container) params.set('container', button.dataset.container);
+            } else {
+                params.set('profile', button.dataset.profile || 'mp3_320');
+                if (button.dataset.formatId) params.set('format_id', button.dataset.formatId);
+                const tags = collectTags();
+                Object.entries(tags).forEach(([key, value]) => params.set(key, value));
+                const embedTags = document.getElementById('embedTags');
+                const embedCover = document.getElementById('embedCover');
+                params.set('embed_tags', embedTags && !embedTags.checked ? '0' : '1');
+                params.set('embed_cover', embedCover && !embedCover.checked ? '0' : '1');
+            }
+            return params;
+        }
+
+        function triggerDownload(url) {
+            // A plain same-origin navigation is the most reliable way to start
+            // a download: it stays inside the click's user gesture and lets the
+            // server's Content-Disposition name the file. On success the page
+            // does not navigate; attachment responses stay in place.
+            const anchor = document.createElement('a');
+            anchor.href = url;
+            anchor.rel = 'noopener';
+            anchor.style.display = 'none';
+            document.body.appendChild(anchor);
+            anchor.click();
+            anchor.remove();
+        }
+
+        function renderProgress(data) {
+            const state = data.state || 'preparing';
+            const sent = Number(data.sent) || 0;
+            const total = Number(data.total) || 0;
+            const percent = data.percent == null ? null : Number(data.percent);
+            const speed = Number(data.speed) || 0;
+            const eta = data.eta == null ? null : Number(data.eta);
+            const estimated = Boolean(data.total_is_estimate);
+
+            // Keep the local one-second ticker aligned with the server clock so
+            // the elapsed reading does not jump between polls.
+            if (data.elapsed != null) {
+                startedAt = Date.now() - (Number(data.elapsed) || 0) * 1000;
+            }
+
+            setProgress(percent);
+
+            if (percentEl) {
+                percentEl.textContent = percent == null
+                    ? 'Working…'
+                    : (estimated ? '~' : '') + percent.toFixed(percent < 10 ? 1 : 0) + '%';
+            }
+            if (sizeEl) {
+                sizeEl.textContent = total
+                    ? formatBytes(sent) + ' / ' + (estimated ? '~' : '') + formatBytes(total)
+                    : (sent ? formatBytes(sent) : '—');
+            }
+            if (speedEl) speedEl.textContent = state === 'streaming' && speed > 0 ? formatBytes(speed) + '/s' : '—';
+            if (elapsedEl) elapsedEl.textContent = formatClock(data.elapsed);
+            if (etaEl) {
+                if (state === 'done') {
+                    etaEl.textContent = 'done';
+                } else if (eta === 0 || (percent != null && percent >= 99.9)) {
+                    // Everything is sent but the server is still closing the
+                    // stream (ffmpeg finalises the container here).
+                    etaEl.textContent = 'finishing…';
+                } else if (eta != null && state === 'streaming') {
+                    etaEl.textContent = formatClock(eta) + ' remaining';
+                } else {
+                    etaEl.textContent = 'estimating…';
+                }
+            }
+
+            if (state === 'streaming') {
+                if (eyebrowEl) eyebrowEl.innerHTML = '<i class="bi bi-cloud-arrow-down"></i> Downloading';
+                if (detailEl) detailEl.textContent = 'Your browser is receiving the file. Keep this tab open.';
+            } else if (state === 'preparing') {
+                if (eyebrowEl) eyebrowEl.innerHTML = '<i class="bi bi-gear"></i> Preparing download';
+                if (detailEl) detailEl.textContent = 'Resolving the media stream. Larger files take a little longer to start.';
+            }
+        }
+
+        function finishSuccess(data) {
+            clearTimers();
+            setProgress(100);
+            if (overlay) overlay.classList.add('is-done');
+            if (eyebrowEl) eyebrowEl.innerHTML = '<i class="bi bi-check-circle"></i> Download complete';
+            if (titleEl) titleEl.textContent = (data && data.filename) || (lastButton && lastButton.dataset.label) || 'Download complete';
+            if (detailEl) detailEl.textContent = 'Saved to your downloads folder. Nothing was stored on the server.';
+            if (percentEl) percentEl.textContent = '100%';
+            if (speedEl) speedEl.textContent = 'Done';
+            if (sizeEl && data) {
+                sizeEl.textContent = data.total_is_estimate
+                    ? '~' + formatBytes(data.sent || data.total)
+                    : formatBytes(data.total || data.sent);
+            }
+            if (elapsedEl && data) elapsedEl.textContent = formatClock(data.elapsed);
+            if (etaEl) etaEl.textContent = 'done';
+            if (saveEl && downloadUrl) {
+                saveEl.href = downloadUrl;
+                saveEl.hidden = false;
+            }
+            if (lastButton) {
+                lastButton.disabled = false;
+                lastButton.classList.remove('is-loading');
+            }
+            window.ReelRelay.toast('Download complete — check your browser downloads.', 'success', 5000);
+            autoHide = setTimeout(hideOverlay, 8000);
+        }
+
+        function finishError(message) {
+            clearTimers();
+            if (overlay) overlay.classList.add('is-error');
+            window.ReelRelay.toast(message || 'The download failed. Please try another format.', 'danger', 9000);
+            hideOverlay();
+        }
+
+        async function pollProgress() {
+            if (!token) return;
+            try {
+                const response = await fetch('/api/progress/' + encodeURIComponent(token), {
+                    headers: { 'Accept': 'application/json' },
+                    cache: 'no-store'
+                });
+                if (!response.ok) {
+                    misses += 1;
+                    if (misses >= 20) {
+                        // Progress tracking is unavailable (e.g. server restarted),
+                        // but the browser download may still be running.
+                        clearTimers();
+                        if (eyebrowEl) eyebrowEl.innerHTML = '<i class="bi bi-check-circle"></i> Download started';
+                        if (detailEl) detailEl.textContent = 'Check your browser downloads for the file.';
+                        if (etaEl) etaEl.textContent = 'unknown';
+                        busy = false;
+                        if (lastButton) {
+                            lastButton.disabled = false;
+                            lastButton.classList.remove('is-loading');
+                        }
+                        autoHide = setTimeout(hideOverlay, 8000);
+                        return;
+                    }
+                    pollTimer = setTimeout(pollProgress, 800);
+                    return;
+                }
+                misses = 0;
+                const data = await response.json();
+                renderProgress(data);
+                if (data.state === 'done') {
+                    finishSuccess(data);
+                    return;
+                }
+                if (data.state === 'error') {
+                    finishError(data.error);
+                    return;
+                }
+            } catch (error) {
+                /* transient network error while polling — keep trying */
+            }
+            pollTimer = setTimeout(pollProgress, 500);
+        }
+
+        function startDownload(button) {
+            if (busy) return;
+            token = newToken();
+            misses = 0;
+            showOverlay(button);
+
+            // Build the streaming URL and start it synchronously. This keeps
+            // the download inside the user's click gesture (no async prepare
+            // round-trip that some browsers treat as a pop-up/download block).
+            const params = buildParams(button);
+            downloadUrl = '/download?' + params.toString();
+
+            if (titleEl) titleEl.textContent = button.dataset.label || 'Download';
+            if (eyebrowEl) eyebrowEl.innerHTML = '<i class="bi bi-cloud-arrow-down"></i> Download started';
+            if (detailEl) {
+                detailEl.textContent = 'Your browser is receiving the file. Keep this tab open.';
+            }
+            if (fallbackEl) {
+                fallbackEl.href = downloadUrl;
+                fallbackEl.hidden = false;
+            }
+
+            triggerDownload(downloadUrl);
+            pollProgress();
+        }
+
+        document.querySelectorAll('.download-trigger').forEach((button) => {
+            button.addEventListener('click', () => startDownload(button));
+        });
+
+        if (dismissBtn) dismissBtn.addEventListener('click', hideOverlay);
+        if (overlay) {
+            overlay.addEventListener('click', (event) => {
+                if (event.target === overlay) hideOverlay();
+            });
+        }
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape' && overlay && !overlay.hidden) hideOverlay();
+        });
+    })();
+</script>
+{% endblock %}

@@ -1,0 +1,25 @@
+# ReelRelay — requirements
+# -------------------------------------------------
+# Core web framework
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30,<1.0
+
+# Templates & form handling
+jinja2>=3.1,<4.0
+python-multipart>=0.0.9
+
+# Multi-platform extraction (keep this fresh — platforms change often)
+yt-dlp>=2025.9.5
+
+# Streaming relay for direct downloads
+httpx>=0.27,<1.0
+
+# Loads .env for local development (see .env.example)
+python-dotenv>=1.0,<2.0
+
+# NOTE: ffmpeg is a *system* dependency, not a pip package.
+# It is required for:
+#   * 4K / 1440p downloads (merging separate video + audio streams)
+#   * MP3 / FLAC / WAV / M4A conversion
+#   * embedding artist, composer and cover art
+# Install it from https://ffmpeg.org/download.html (or `winget install Gyan.FFmpeg`).

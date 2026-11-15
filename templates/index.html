@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+
+{% block title %}{{ app_name }} — YouTube, Instagram &amp; Facebook downloads{% endblock %}
+
+{% block content %}
+<section class="hero">
+    <div class="hero-badge">
+        <i class="bi bi-stars"></i>
+        <span>Up to {{ max_height_label }} video · MP3 / FLAC · Cover art &amp; tags</span>
+    </div>
+
+    <h1 class="hero-title">
+        Every video. Every reel.<br>
+        <span class="gradient-text">Straight to your device.</span>
+    </h1>
+
+    <p class="hero-lead">
+        Paste a YouTube, Instagram or Facebook link. Pick up to {{ max_height_label }} video or a fully
+        tagged audio file — then let it stream straight to you. Nothing is stored on our server.
+    </p>
+
+    <div class="search-card">
+        <form method="post" action="/preview" id="urlForm" novalidate>
+            <label for="media_url" class="form-label search-label">
+                <i class="bi bi-link-45deg"></i> Paste a video link
+            </label>
+            <div class="search-row">
+                <div class="search-input-wrap">
+                    <i class="bi bi-play-btn search-icon"></i>
+                    <input
+                        type="text"
+                        class="form-control search-input"
+                        id="media_url"
+                        name="media_url"
+                        inputmode="url"
+                        autocomplete="off"
+                        spellcheck="false"
+                        placeholder="https://youtube.com/watch?v=… or instagram.com/reel/…"
+                        aria-describedby="urlHelp"
+                        required>
+                    <button type="button" class="btn paste-btn" id="pasteBtn" title="Paste from clipboard">
+                        <i class="bi bi-clipboard"></i><span>Paste</span>
+                    </button>
+                </div>
+                <button class="btn btn-primary search-submit" type="submit" id="submitBtn">
+                    <i class="bi bi-search"></i>
+                    <span>Preview</span>
+                </button>
+            </div>
+            <div class="search-feedback" id="urlFeedback" role="status"></div>
+            <p class="search-help" id="urlHelp">
+                YouTube videos, Shorts &amp; Music · Instagram reels &amp; posts · Facebook videos.
+            </p>
+        </form>
+    </div>
+
+    <div class="trust-row" aria-label="Highlights">
+        <span><i class="bi bi-camera-video"></i> Up to {{ max_height_label }}</span>
+        <span><i class="bi bi-music-note-beamed"></i> Tagged audio</span>
+        <span><i class="bi bi-image"></i> Cover art</span>
+        <span><i class="bi bi-hdd-stack"></i> Never stored</span>
+    </div>
+</section>
+
+<section class="quick-facts" aria-label="What you get">
+    <article class="fact">
+        <span class="fact-icon icon-rose"><i class="bi bi-badge-4k"></i></span>
+        <div>
+            <h2>Video up to {{ max_height_label }}</h2>
+            <p>Every quality the source exposes, muxed live with the best audio.</p>
+        </div>
+    </article>
+    <article class="fact">
+        <span class="fact-icon icon-cyan"><i class="bi bi-music-note-list"></i></span>
+        <div>
+            <h2>Audio that arrives tagged</h2>
+            <p>MP3, FLAC, M4A, WAV or the original stream — with cover art and artist tags.</p>
+        </div>
+    </article>
+    <article class="fact">
+        <span class="fact-icon icon-emerald"><i class="bi bi-hdd-network"></i></span>
+        <div>
+            <h2>Nothing kept on the server</h2>
+            <p>No downloads folder, no media cache. Bytes pass through memory and disappear.</p>
+        </div>
+    </article>
+</section>
+
+<div class="loading-overlay" id="pageLoader" hidden aria-hidden="true">
+    <div class="loading-panel">
+        <div class="spinner-ring"></div>
+        <h2>Reading the link…</h2>
+        <p>Finding every resolution and audio stream. This usually takes a few seconds.</p>
+        <div class="loading-bar"><span></span></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    (function () {
+        const form = document.getElementById('urlForm');
+        const input = document.getElementById('media_url');
+        const feedback = document.getElementById('urlFeedback');
+        const submitBtn = document.getElementById('submitBtn');
+        const loader = document.getElementById('pageLoader');
+        const pasteBtn = document.getElementById('pasteBtn');
+
+        const isSupported = window.ReelRelay.isSupportedUrl;
+
+        function validate(showError) {
+            const value = input.value.trim();
+            if (!value) {
+                input.classList.remove('is-invalid', 'is-valid');
+                if (feedback) feedback.textContent = '';
+                return false;
+            }
+            const ok = isSupported(value);
+            input.classList.toggle('is-valid', ok);
+            input.classList.toggle('is-invalid', !ok);
+            if (feedback) {
+                feedback.textContent = ok
+                    ? 'Looks good — ready to preview.'
+                    : 'Paste a YouTube, Instagram or Facebook video link.';
+                feedback.className = 'search-feedback ' + (ok ? 'text-success' : 'text-warning');
+            }
+            if (!ok && showError) input.focus();
+            return ok;
+        }
+
+        if (input) {
+            input.addEventListener('input', () => validate(false));
+            input.addEventListener('paste', () => setTimeout(() => validate(false), 20));
+        }
+
+        if (pasteBtn) {
+            pasteBtn.addEventListener('click', async () => {
+                try {
+                    const text = await navigator.clipboard.readText();
+                    input.value = text.trim();
+                    validate(true);
+                    input.dispatchEvent(new Event('input'));
+                } catch (error) {
+                    window.ReelRelay.toast('Clipboard access was blocked. Paste with Ctrl+V instead.', 'warning');
+                    input.focus();
+                }
+            });
+        }
+
+        if (form) {
+            form.addEventListener('submit', (event) => {
+                if (!validate(true)) {
+                    event.preventDefault();
+                    return;
+                }
+                submitBtn.disabled = true;
+                submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span><span>Reading…</span>';
+                if (loader) {
+                    loader.hidden = false;
+                }
+            });
+        }
+    })();
+</script>
+{% endblock %}

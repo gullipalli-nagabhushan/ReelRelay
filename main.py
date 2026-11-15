@@ -1,0 +1,505 @@
+"""FastAPI application — ReelRelay.
+
+Design goals
+------------
+* One preview for YouTube, Instagram and Facebook links.
+* Rich preview with every available video quality and audio profile.
+* Audio downloads carry artist / album / composer / year tags and cover art.
+* Downloads are **streamed straight to the browser**.  Media is never written
+  to server storage, so nothing is left behind after the request ends.
+"""
+
+from __future__ import annotations
+
+import logging
+import threading
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlencode
+
+import yt_dlp
+from fastapi import FastAPI, Form, Query, Request
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
+
+from core import config
+from core.download import DownloadPlan, build_plan, prepare_stream
+from core.progress import progress
+from core.streaming import DownloadError
+from core.utils import compact_number, content_disposition, human_duration, human_size
+from core.ytdlp import (
+    PLATFORM_LABELS,
+    ExtractionError,
+    UnavailableError,
+    build_view,
+    get_info,
+    is_valid_url,
+)
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logger = logging.getLogger(__name__)
+
+BASE_DIR = Path(__file__).resolve().parent
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info(
+        "%s %s starting — ffmpeg=%s, max height=%sp, concurrent downloads=%s",
+        config.APP_NAME,
+        config.APP_VERSION,
+        config.FFMPEG or "MISSING",
+        config.MAX_VIDEO_HEIGHT,
+        config.MAX_CONCURRENT_DOWNLOADS,
+    )
+    if not config.FFMPEG_OK:
+        logger.warning(
+            "ffmpeg was not found. 4K merging and MP3/FLAC/M4A/WAV conversion are disabled. "
+            "Install ffmpeg and restart to unlock every format."
+        )
+    yield
+
+
+app = FastAPI(
+    title=config.APP_NAME,
+    description=(
+        "Inspect and stream video or tagged audio from YouTube, Instagram and "
+        "Facebook straight to the browser. Nothing is stored on the server."
+    ),
+    version=config.APP_VERSION,
+    lifespan=lifespan,
+    docs_url=None,
+    redoc_url=None,
+)
+
+app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+
+templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+templates.env.filters["human_size"] = human_size
+templates.env.filters["human_duration"] = human_duration
+templates.env.filters["compact"] = compact_number
+
+# --------------------------------------------------------------------------- #
+# Download concurrency guard
+# --------------------------------------------------------------------------- #
+
+_slots = threading.BoundedSemaphore(config.MAX_CONCURRENT_DOWNLOADS)
+_active_lock = threading.Lock()
+_active_downloads = 0
+
+
+def _acquire_slot() -> bool:
+    global _active_downloads
+    if not _slots.acquire(blocking=False):
+        return False
+    with _active_lock:
+        _active_downloads += 1
+    return True
+
+
+def _release_slot() -> None:
+    global _active_downloads
+    with _active_lock:
+        if _active_downloads > 0:
+            _active_downloads -= 1
+    try:
+        _slots.release()
+    except ValueError:  # pragma: no cover - over-release guard
+        pass
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    return response
+
+
+# --------------------------------------------------------------------------- #
+# Helpers
+# --------------------------------------------------------------------------- #
+
+
+def _base_context(request: Request) -> dict[str, Any]:
+    return {
+        "request": request,
+        "app_name": config.APP_NAME,
+        "app_tagline": config.APP_TAGLINE,
+        "app_version": config.APP_VERSION,
+        "ffmpeg_ok": config.FFMPEG_OK,
+        "platforms": list(PLATFORM_LABELS.values()),
+        "max_height": config.MAX_VIDEO_HEIGHT,
+        "max_height_label": {2160: "4K", 1440: "2K", 4320: "8K"}.get(
+            config.MAX_VIDEO_HEIGHT, f"{config.MAX_VIDEO_HEIGHT}p"
+        ),
+    }
+
+
+def _error_response(
+    request: Request,
+    message: str,
+    status_code: int = 400,
+    *,
+    hint: str | None = None,
+) -> HTMLResponse:
+    context = _base_context(request)
+    context.update({"error": message, "hint": hint})
+    return templates.TemplateResponse(
+        request=request,
+        name="error.html",
+        context=context,
+        status_code=status_code,
+    )
+
+
+def _collect_tags(
+    title: str | None,
+    artist: str | None,
+    album: str | None,
+    composer: str | None,
+    genre: str | None,
+    year: str | None,
+    track: str | None,
+) -> dict[str, str]:
+    return {
+        key: value
+        for key, value in {
+            "title": title,
+            "artist": artist,
+            "album": album,
+            "composer": composer,
+            "genre": genre,
+            "year": year,
+            "track": track,
+        }.items()
+        if value
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Pages
+# --------------------------------------------------------------------------- #
+
+
+@app.get("/", response_class=HTMLResponse)
+async def home(request: Request):
+    context = _base_context(request)
+    return templates.TemplateResponse(request=request, name="index.html", context=context)
+
+
+@app.post("/preview", response_class=HTMLResponse)
+async def preview(request: Request, media_url: str = Form(...)):
+    url = (media_url or "").strip()
+    if not is_valid_url(url):
+        return _error_response(
+            request,
+            "That does not look like a supported video link.",
+            hint="Paste a YouTube, Instagram or Facebook video, Shorts or Reel link.",
+        )
+
+    try:
+        info = await run_in_threadpool(get_info, url)
+        view = await run_in_threadpool(build_view, info)
+    except ExtractionError as exc:
+        return _error_response(request, str(exc), status_code=422, hint="The link may be private, age-restricted, or removed.")
+    except Exception:  # noqa: BLE001
+        logger.exception("Preview failed for %s", url)
+        return _error_response(
+            request,
+            "The preview could not be built. Please try again.",
+            status_code=500,
+        )
+
+    context = _base_context(request)
+    context.update({"media": view})
+    return templates.TemplateResponse(request=request, name="preview.html", context=context)
+
+
+# --------------------------------------------------------------------------- #
+# JSON API
+# --------------------------------------------------------------------------- #
+
+
+@app.get("/api/info")
+async def api_info(request: Request, url: str = Query(..., min_length=3)):
+    if not is_valid_url(url):
+        return JSONResponse({"ok": False, "error": "Not a supported video URL."}, status_code=400)
+    try:
+        info = await run_in_threadpool(get_info, url)
+        view = await run_in_threadpool(build_view, info)
+    except (ExtractionError, UnavailableError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=422)
+    except Exception:  # noqa: BLE001
+        logger.exception("API info failed for %s", url)
+        return JSONResponse({"ok": False, "error": "Unexpected server error."}, status_code=500)
+    return JSONResponse({"ok": True, "data": view})
+
+
+@app.get("/api/prepare")
+async def api_prepare(
+    request: Request,
+    url: str = Query(..., min_length=3),
+    kind: str = Query("video", pattern="^(video|audio)$"),
+    token: str | None = Query(None, max_length=64),
+    option: str | None = Query(None, max_length=80),
+    height: int | None = Query(None, ge=144, le=4320),
+    container: str | None = Query(None, pattern="^(mp4|webm|mkv|m4v)$"),
+    profile: str | None = Query(None, max_length=24),
+    format_id: str | None = Query(None, max_length=24),
+    embed_tags: bool = Query(True),
+    embed_cover: bool = Query(True),
+    title: str | None = None,
+    artist: str | None = None,
+    album: str | None = None,
+    composer: str | None = None,
+    genre: str | None = None,
+    year: str | None = None,
+    track: str | None = None,
+):
+    if not is_valid_url(url):
+        return JSONResponse({"ok": False, "error": "Not a supported video URL."}, status_code=400)
+
+    token = (token or "").strip()[:64]
+    tags = _collect_tags(title, artist, album, composer, genre, year, track)
+    try:
+        info = await run_in_threadpool(get_info, url)
+        plan = await run_in_threadpool(
+            build_plan,
+            info,
+            kind=kind,
+            option_id=option,
+            height=height,
+            container=container,
+            profile=profile,
+            format_id=format_id,
+            tags=tags,
+            embed_tags=embed_tags,
+            embed_cover=embed_cover,
+        )
+    except (ExtractionError, UnavailableError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=422)
+    except Exception:  # noqa: BLE001
+        logger.exception("Prepare failed for %s", url)
+        return JSONResponse({"ok": False, "error": "Could not prepare this download."}, status_code=500)
+
+    if token:
+        progress.create(
+            token,
+            plan.filename,
+            plan.content_length or plan.estimated_total,
+            estimated=plan.content_length is None and plan.estimated_total is not None,
+        )
+
+    params = {
+        "url": url,
+        "kind": kind,
+        "token": token,
+        "option": option,
+        "height": height,
+        "container": container,
+        "profile": profile,
+        "format_id": format_id,
+        "embed_tags": "1" if embed_tags else "0",
+        "embed_cover": "1" if embed_cover else "0",
+        **tags,
+    }
+    query = urlencode({key: value for key, value in params.items() if value not in (None, "")})
+    # Keep this relative: works behind HTTPS reverse proxies without mixed content.
+    download_url = f"/download?{query}"
+
+    payload = {
+        "ok": True,
+        "plan": plan.summary(),
+        "download_url": download_url,
+        "token": token or None,
+    }
+    return JSONResponse(payload)
+
+
+# --------------------------------------------------------------------------- #
+# Streaming download
+# --------------------------------------------------------------------------- #
+
+
+@app.get("/download")
+async def download(
+    request: Request,
+    url: str = Query(..., min_length=3),
+    kind: str = Query("video", pattern="^(video|audio)$"),
+    token: str | None = Query(None, max_length=64),
+    option: str | None = Query(None, max_length=80),
+    height: int | None = Query(None, ge=144, le=4320),
+    container: str | None = Query(None, pattern="^(mp4|webm|mkv|m4v)$"),
+    profile: str | None = Query(None, max_length=24),
+    format_id: str | None = Query(None, max_length=24),
+    embed_tags: bool = Query(True),
+    embed_cover: bool = Query(True),
+    title: str | None = None,
+    artist: str | None = None,
+    album: str | None = None,
+    composer: str | None = None,
+    genre: str | None = None,
+    year: str | None = None,
+    track: str | None = None,
+):
+    if not is_valid_url(url):
+        return _error_response(request, "Not a supported video URL.")
+
+    token = (token or "").strip()[:64]
+    if token:
+        progress.create(token)
+
+    if not _acquire_slot():
+        if token:
+            progress.finish(token, "The server is busy. Wait a moment and try again.")
+        return _error_response(
+            request,
+            "The server is already streaming the maximum number of downloads.",
+            status_code=429,
+            hint="Wait for a download to finish, then try again.",
+        )
+
+    plan: DownloadPlan | None = None
+    try:
+        tags = _collect_tags(title, artist, album, composer, genre, year, track)
+        info = await run_in_threadpool(get_info, url)
+        plan = await run_in_threadpool(
+            build_plan,
+            info,
+            kind=kind,
+            option_id=option,
+            height=height,
+            container=container,
+            profile=profile,
+            format_id=format_id,
+            tags=tags,
+            embed_tags=embed_tags,
+            embed_cover=embed_cover,
+        )
+        if token:
+            progress.create(
+                token,
+                plan.filename,
+                plan.content_length or plan.estimated_total,
+                estimated=plan.content_length is None and plan.estimated_total is not None,
+            )
+        prepared = await run_in_threadpool(prepare_stream, plan)
+    except (ExtractionError, UnavailableError, DownloadError) as exc:
+        _release_slot()
+        if token:
+            progress.finish(token, str(exc))
+        return _error_response(request, str(exc), status_code=422)
+    except ValueError as exc:
+        _release_slot()
+        if token:
+            progress.finish(token, str(exc))
+        return _error_response(request, str(exc), status_code=400)
+    except Exception:  # noqa: BLE001
+        _release_slot()
+        logger.exception("Download failed before streaming for %s", url)
+        if token:
+            progress.finish(token, "The download could not be started.")
+        return _error_response(
+            request,
+            "The download could not be started. Please try another quality.",
+            status_code=500,
+        )
+
+    logger.info(
+        "Streaming %s (%s) from %s — %s",
+        plan.filename,
+        plan.quality,
+        plan.platform,
+        plan.mode,
+    )
+
+    stream_total = prepared.content_length or plan.content_length or plan.estimated_total
+    stream_estimated = (
+        prepared.content_length is None
+        and plan.content_length is None
+        and plan.estimated_total is not None
+    )
+
+    if token:
+        progress.begin(token, stream_total, estimated=stream_estimated)
+
+    async def body():
+        sent = 0
+        completed = False
+        try:
+            async for chunk in iterate_in_threadpool(prepared.chunks):
+                yield chunk
+                sent += len(chunk)
+                if token:
+                    progress.update(token, sent, stream_total, estimated=stream_estimated)
+            completed = True
+            if token:
+                progress.finish(token)
+        finally:
+            if token and not completed:
+                progress.finish(token, "The download was interrupted before it finished.")
+            try:
+                prepared.close()
+            finally:
+                _release_slot()
+
+    headers = {
+        "Content-Disposition": content_disposition(plan.filename),
+        "Cache-Control": "no-store, no-transform",
+        "X-Accel-Buffering": "no",
+        "X-Download-Mode": plan.mode,
+        "X-Download-Quality": plan.quality,
+        "X-Download-Platform": plan.platform,
+    }
+    if prepared.content_length:
+        # Only the origin's exact length is safe to advertise; ffmpeg output
+        # (live mux / transcode) is chunked instead.
+        headers["Content-Length"] = str(prepared.content_length)
+
+    return StreamingResponse(
+        body(),
+        media_type=plan.media_type,
+        headers=headers,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Progress + health
+# --------------------------------------------------------------------------- #
+
+
+@app.get("/api/progress/{token}")
+async def api_progress(token: str):
+    snapshot = progress.get(token[:64])
+    if snapshot is None:
+        return JSONResponse(
+            {"ok": False, "state": "unknown", "error": "This download is no longer being tracked."},
+            status_code=404,
+        )
+    return JSONResponse(snapshot)
+
+
+@app.get("/health")
+async def health():
+    return {
+        "status": "healthy",
+        "yt_dlp": yt_dlp.version.__version__,
+        "active_downloads": _active_downloads,
+        "tracked_downloads": len(progress),
+        "platforms": list(PLATFORM_LABELS.values()),
+        "storage": "none — downloads are streamed to the client",
+        **config.summary(),
+    }
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run("main:app", host="0.0.0.0", port=8080, reload=False)

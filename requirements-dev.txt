@@ -1,0 +1,4 @@
+-r requirements.txt
+
+# Offline unit tests only — no network access is required.
+pytest>=8.0,<9.0
