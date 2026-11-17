@@ -73,10 +73,34 @@ Copy `.env.example` to `.env` (values are read from the process environment).
 | `MAX_CONCURRENT_DOWNLOADS` | `4` | Simultaneous streams; extra requests get `429`. |
 | `INFO_CACHE_TTL` | `600` | Seconds a yt-dlp metadata result is reused. |
 | `INFO_CACHE_SIZE` | `64` | Number of cached videos. |
-| `YTDLP_COOKIES_FILE` | — | Cookies for age-restricted / sign-in media. Instagram and Facebook frequently need this. |
+| `YTDLP_COOKIES_FILE` | — | Path to a Netscape cookies file (local / VPS). |
+| `YTDLP_COOKIES_B64` | — | Base64 of that file, written to a private temp file. Best for serverless hosts. |
+| `YTDLP_COOKIES` | — | Raw multiline Netscape cookie text. |
 | `YTDLP_PROXY` | — | Proxy used by yt-dlp. |
 | `FFMPEG_BINARY` | auto | Explicit ffmpeg path. |
 | `FFPROBE_BINARY` | auto | Explicit ffprobe path. |
+
+### Cookies (age-restricted, Instagram, Facebook)
+
+1. Install the **Get cookies.txt LOCALLY** extension (Chrome / Firefox / Edge).
+2. Sign in to `youtube.com`, `instagram.com` or `facebook.com` in that browser and open
+   the account you want the server to use.
+3. Export `cookies.txt` in **Netscape** format for that site.
+4. Wire it up:
+   - Local / VPS: `YTDLP_COOKIES_FILE=/path/to/cookies.txt`.
+   - Vercel, Render, Cloud Run (no persistent disk): set `YTDLP_COOKIES_B64` to the
+     base64 of the file — recommended, because it survives newlines and tabs — or
+     `YTDLP_COOKIES` to the raw file contents.
+
+   PowerShell: `[Convert]::ToBase64String([IO.File]::ReadAllBytes("cookies.txt"))`
+   Linux/macOS: `base64 -w0 cookies.txt`
+
+On startup the app decodes the value into `$TMPDIR/reelrelay-cookies-<pid>.txt` with
+`0600` permissions and deletes it when the process exits. Cookies are never logged or
+written into the repository.
+
+**Treat cookies like a password.** They grant full access to the account, so use a
+throwaway account, never commit them, and rotate or delete them when you are done.
 
 ## How streaming works
 
@@ -138,7 +162,12 @@ docker build -t reelrelay .
 docker run --rm -p 8000:8000 reelrelay
 ```
 
-The image installs ffmpeg and runs as a non-root user.
+The image installs ffmpeg and runs as a non-root user. The build only copies the
+application (see `.dockerignore`).
+
+For a public deployment, use the ready-made kit in [`deploy/`](deploy/README.md):
+Docker Compose + Caddy with automatic HTTPS, a systemd alternative, Oracle Cloud
+instructions and firewall/DNS/cookie checklists.
 
 ## Platform notes
 
@@ -146,11 +175,15 @@ The image installs ffmpeg and runs as a non-root user.
 - PythonAnywhere works with an ASGI/uvicorn setup, but streaming long downloads may hit
   platform time limits; a VPS or container host is a better fit.
 - Media URLs expire after a few hours. If a download fails, reload the preview and try again.
-- Instagram and Facebook often require cookies (`YTDLP_COOKIES_FILE`) for anything beyond
-  public posts, and may only expose a progressive video file.
+- Instagram and Facebook often require cookies (`YTDLP_COOKIES_B64` on serverless,
+  `YTDLP_COOKIES_FILE` elsewhere) for anything beyond public posts, and may only expose a
+  progressive video file.
 - M4A in a streamed MP4 container carries tags but not cover art; use MP3 or FLAC for
   artwork. WAV has no composer or cover-art slot.
-- Age-restricted or members-only content requires `YTDLP_COOKIES_FILE`.
+- Age-restricted or members-only content requires cookies.
+- Vercel/Netlify are a poor fit for this app: serverless functions cap request duration
+  (60s on Vercel Hobby), do not ship ffmpeg, and only allow ephemeral `/tmp` writes.
+  Use a container host or a small VPS for reliable 4K downloads.
 
 ## Project layout
 
@@ -166,6 +199,7 @@ core/cover.py        thumbnail selection / fetching
 core/utils.py        filenames, sizes, durations, RFC 6266 headers
 templates/           Jinja2 pages
 static/              CSS and JS
+deploy/              Docker Compose + Caddy + systemd deployment kit
 tests/               offline pytest suite
 ```
 

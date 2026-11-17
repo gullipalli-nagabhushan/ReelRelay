@@ -97,6 +97,7 @@ def test_eta_and_remaining_use_measured_speed() -> None:
     assert snapshot["eta"] == 6.0
     assert snapshot["percent"] == 40.0
     assert snapshot["speed"] == 100
+    assert snapshot["stalled"] is False
 
 
 def test_stalled_stream_stops_reporting_speed() -> None:
@@ -112,6 +113,7 @@ def test_stalled_stream_stops_reporting_speed() -> None:
     snapshot = registry.get("stall")
     assert snapshot["speed"] == 0
     assert snapshot["eta"] is None
+    assert snapshot["stalled"] is True
     assert snapshot["remaining"] == 100
 
 
@@ -126,3 +128,15 @@ def test_relay_finish_snaps_to_exact_total() -> None:
     assert snapshot["percent"] == 100.0
     assert snapshot["sent"] == 1000
     assert snapshot["total_is_estimate"] is False
+
+
+def test_elapsed_keeps_counting_when_streaming_begins() -> None:
+    registry = ProgressRegistry()
+    registry.create("elapsed", "clip.mp4", 100)
+    with registry._lock:
+        registry._entries["elapsed"]["started_at"] = time.time() - 5.0
+
+    registry.begin("elapsed", 100)
+    snapshot = registry.get("elapsed")
+    assert snapshot["elapsed"] >= 4.5
+    assert snapshot["state"] == "streaming"

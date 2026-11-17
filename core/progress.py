@@ -107,9 +107,10 @@ class ProgressRegistry:
             if estimated is not None and (total or estimated):
                 entry["estimated"] = bool(estimated)
             if first_begin:
-                # Count from the moment bytes really start flowing, not from
-                # the metadata request that prepared the download.
-                entry["started_at"] = now
+                # Speed is measured from the moment bytes really start
+                # flowing. Elapsed time deliberately keeps counting from the
+                # original request so the readout never jumps backwards when
+                # preparation hands over to streaming.
                 entry["last_at"] = now
                 entry["last_sent"] = 0
             entry["first_byte_at"] = entry.get("first_byte_at") or now

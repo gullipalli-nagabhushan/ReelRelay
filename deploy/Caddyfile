@@ -1,0 +1,24 @@
+# ReelRelay reverse proxy.
+# install.sh replaces __DOMAIN__ with the domain you pass in DOMAIN=...
+#
+# flush_interval -1 disables response buffering, so download progress is not
+# stuck behind the proxy and clients receive bytes as they are produced.
+# Caddy applies no read/write timeout to proxied responses by default, which is
+# exactly what long 4K muxes need: do not add a timeout here.
+
+__DOMAIN__ {
+	encode zstd gzip
+
+	reverse_proxy 127.0.0.1:8080 {
+		flush_interval -1
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	log
+}

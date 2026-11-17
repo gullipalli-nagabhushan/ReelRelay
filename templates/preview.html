@@ -600,10 +600,13 @@
             if (etaEl) {
                 if (state === 'done') {
                     etaEl.textContent = 'done';
-                } else if (eta === 0 || (percent != null && percent >= 99.9)) {
+                } else if ((eta != null && eta < 1) || (percent != null && percent >= 99.9) ||
+                           (data.stalled && percent != null && percent >= 90)) {
                     // Everything is sent but the server is still closing the
                     // stream (ffmpeg finalises the container here).
                     etaEl.textContent = 'finishing…';
+                } else if (data.stalled) {
+                    etaEl.textContent = 'waiting for the source…';
                 } else if (eta != null && state === 'streaming') {
                     etaEl.textContent = formatClock(eta) + ' remaining';
                 } else {
