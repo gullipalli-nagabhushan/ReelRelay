@@ -361,20 +361,23 @@ def _ydl_options() -> dict[str, Any]:
     return options
 
 
-_COOKIE_HINT = "Set YTDLP_COOKIES_B64 (or YTDLP_COOKIES_FILE) with a Netscape cookies file."
+_COOKIE_HINT = (
+    "If you own the account, export a Netscape cookies.txt and point "
+    "YTDLP_COOKIES_FILE at it (see the FAQ in the README)."
+)
 
 _FRIENDLY_ERRORS = (
     ("private", "This post is private, so the platform will not let us read it."),
     ("login required", f"This platform is asking for a sign-in. {_COOKIE_HINT}"),
     ("sign in", f"This platform is asking for a sign-in. {_COOKIE_HINT}"),
-    ("rate-limit", "The platform is rate-limiting the server. Wait a minute and try again."),
+    ("rate-limit", "The platform is rate-limiting this connection. Wait a minute and try again."),
     ("age", f"This media is age-restricted. {_COOKIE_HINT}"),
     ("members", "This media is for members only."),
-    ("not available in your country", "This media is blocked in the server's region."),
+    ("not available in your country", "This media is blocked in your region."),
     ("unavailable", "This media is unavailable, removed, or region-locked."),
     ("unsupported url", "That link is not a supported video page."),
     ("live event", "Live streams are not supported — try again after the stream ends."),
-    ("ffmpeg", "ffmpeg is required for this operation but was not found on the server."),
+    ("ffmpeg", "ffmpeg is required for this operation but was not found on this computer."),
 )
 
 

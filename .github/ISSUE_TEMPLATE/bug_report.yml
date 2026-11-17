@@ -1,0 +1,111 @@
+name: Bug report
+description: Report a crash, a broken download, or behaviour that looks wrong.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a problem.
+
+        **Never paste cookies, session tokens, account passwords, or links to
+        private content.** Redact anything sensitive before submitting.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: A clear description of the problem and what you expected instead.
+      placeholder: "When I click Download, the overlay stays at 0% and then shows..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The exact sequence that triggers the problem.
+      placeholder: |
+        1. Start ReelRelay with ...
+        2. Paste a public YouTube link
+        3. Choose 1080p and press Download
+        4. See error ...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: ReelRelay version
+      description: Shown in the footer and at `/health`.
+      placeholder: "3.0.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows 11
+        - Windows 10
+        - macOS
+        - Linux
+        - Other (mention it below)
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      description: Output of `python --version`.
+      placeholder: "3.12.4"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: ffmpeg
+    attributes:
+      label: Is ffmpeg available?
+      description: Run `ffmpeg -version` to check.
+      options:
+        - "Yes"
+        - "No"
+        - "Not sure"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Which platform is involved?
+      options:
+        - YouTube
+        - Instagram
+        - Facebook
+        - More than one
+        - Not platform-specific
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or traceback
+      description: Paste the console output. Remove cookies, tokens and private URLs first.
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: I am running the latest `main` branch or the latest release.
+          required: true
+        - label: I removed cookies, tokens and personal data from this report.
+          required: true

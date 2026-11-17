@@ -1,209 +1,614 @@
+<div align="center">
+
 # ReelRelay
 
-**YouTube · Instagram · Facebook — straight to your device.**
+**A local-first video and audio downloader for YouTube, Instagram and Facebook.**
 
-ReelRelay previews a video link, lists every deliverable quality, and streams the selected
-video or tagged audio **straight to the browser**. Media is never written to server storage.
+Paste a link, preview every available quality, and stream the result straight to
+your browser — up to **8K video**, or fully tagged audio with cover art.
 
-Audio downloads include artist, album, composer, year, genre and cover-art metadata.
-Available formats: original audio, MP3 320/192, FLAC, M4A (AAC 256) and WAV. Instagram and
-Facebook links often expose only a progressive video file, so ReelRelay extracts audio from
-that file when no standalone audio stream exists.
+[![CI](https://github.com/gullipalli-nagabhushan/ReelRelay/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gullipalli-nagabhushan/ReelRelay/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#requirements)
+
+[Quick start](#quick-start) ·
+[Architecture](#architecture) ·
+[HTTP API](#http-api) ·
+[Testing](#testing) ·
+[Contributing](CONTRIBUTING.md) ·
+[FAQ](#frequently-asked-questions) ·
+[License](#license)
+
+</div>
+
+---
+
+## Overview
+
+ReelRelay is a FastAPI application that runs on your own machine. It uses
+[yt-dlp](https://github.com/yt-dlp/yt-dlp) for metadata and format discovery,
+[ffmpeg](https://ffmpeg.org/) for muxing and transcoding, and `httpx` for
+byte-exact relay of direct media streams.
+
+The application never stores media on disk. A download is either relayed from
+the platform's CDN or piped from ffmpeg's stdout directly into the HTTP
+response. The only lasting file is the ordinary browser download chosen by the
+user.
+
+**Version:** 3.0.0 · **Status:** actively maintained · **License:** MIT
+
+<p align="center">
+  <img src="docs/screenshot.png" alt="ReelRelay landing page showing the search box, 8K badge and example videos" width="100%">
+</p>
 
 ## Features
 
-- **Up to 4K video** — every real stream the source exposes, bounded by `MAX_VIDEO_HEIGHT`
-  (2160p by default).
-  - H.264 / AV1 in MP4, VP9 in WebM, plus progressive fallbacks.
-  - Video + audio are muxed live with ffmpeg when the platform serves them separately.
-  - Portrait reels are labelled by their short edge (1080×1920 is shown as 1080p).
-- **High-quality audio** — original stream (no re-encode), MP3 320/192, FLAC, AAC 256 and WAV.
-- **Full metadata** — artist and song are derived from the title/channel (`- Topic` handling);
-  composer is read from description credits when present. Every field is editable in the UI.
-- **Cover art** — the best thumbnail is embedded for MP3 and FLAC.
-- **Zero server storage** — direct streams are relayed with `httpx`; converted formats are
-  piped from ffmpeg's stdout. The only optional temp file is a JPEG cover for FLAC, which is
-  deleted as soon as the request ends.
-- **Resilient delivery** — if the CDN drops a connection mid-body, the relay resumes from the
-  exact byte offset with an HTTP `Range` request (up to 10 attempts).
-- **Live progress** — the download panel shows elapsed time, bytes, percentage and speed, then
-  a clear completion state. Downloads use a native browser download, so the tab never spins.
-- **Tag editor, format picker**, responsive dark UI, friendly error pages.
+| Capability | Details |
+| --- | --- |
+| Multi-platform | YouTube (videos, Shorts, Music), Instagram (reels, posts, IGTV), Facebook (videos, reels, watch) |
+| Up to 8K | Every real stream the source exposes, bounded by `MAX_VIDEO_HEIGHT` (4320p by default) |
+| Video codecs | H.264, H.265, AV1 and VP9; MP4/WebM containers; HDR and high-frame-rate detection |
+| Audio formats | Original stream, MP3 320/192, FLAC, M4A (AAC 256), WAV |
+| Metadata | Title, artist, album, composer, genre, year and track, editable before download |
+| Cover art | Best thumbnail embedded as ID3 `APIC` (MP3) or FLAC picture |
+| Zero storage | Relay or ffmpeg pipe; no media cache and no app-managed downloads folder |
+| Resilient relay | Resumes truncated CDN connections with HTTP `Range` requests (bounded retries) |
+| Live progress | Elapsed time, bytes, percentage, speed, ETA and stall detection |
+| Local by default | Binds to `127.0.0.1`; no accounts, telemetry, analytics or cloud storage |
+| One-click start | Windows launcher and desktop-shortcut creator, with automatic dependency setup |
+| Offline tests | 99 tests with synthetic yt-dlp payloads and a fake HTTP origin |
 
-## Requirements
+## Tech stack
 
-- Python 3.11+ recommended (3.10 works, but yt-dlp prints a deprecation warning)
-- **ffmpeg** on `PATH` (required for 4K merging and audio conversion)
-  - Windows: `winget install Gyan.FFmpeg` or `choco install ffmpeg`
-  - macOS: `brew install ffmpeg`
-  - Debian/Ubuntu: `sudo apt install ffmpeg`
+| Layer | Choice |
+| --- | --- |
+| Web framework | FastAPI + Uvicorn |
+| Templates | Jinja2 |
+| Frontend | Bootstrap 5, Bootstrap Icons, vanilla JavaScript (no build step) |
+| Extraction | yt-dlp |
+| HTTP client | httpx |
+| Media processing | ffmpeg / ffprobe |
+| Configuration | Environment variables, optional `python-dotenv` |
+| Testing | pytest (fully offline) |
 
-Without ffmpeg the app still runs, but only single-file video streams and original audio
-are available.
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph Browser
+        UI["Preview UI"]
+    end
+
+    subgraph App["FastAPI process"]
+        PREVIEW["POST /preview"]
+        PREPARE["GET /api/prepare"]
+        DOWNLOAD["GET /download"]
+        PROGRESS["GET /api/progress/{token}"]
+        CACHE[("Info cache")]
+        REG[("Progress registry")]
+        SEM["Concurrency semaphore"]
+    end
+
+    YTDLP["yt-dlp"]
+    RELAY["httpx relay"]
+    FFMPEG["ffmpeg pipe"]
+    SOURCE[("YouTube / Instagram / Facebook")]
+
+    UI -->|"media_url"| PREVIEW --> YTDLP --> SOURCE
+    PREVIEW --> CACHE
+    UI --> PREPARE --> YTDLP
+    PREPARE -->|"plan + token + download_url"| UI
+    UI -->|"native download"| DOWNLOAD --> SEM
+    DOWNLOAD -->|"progressive"| RELAY --> SOURCE
+    DOWNLOAD -->|"merge / convert"| FFMPEG --> SOURCE
+    DOWNLOAD --> REG
+    UI -.->|"poll every second"| PROGRESS --> REG
+```
+
+### Request lifecycle
+
+1. **Preview** — `POST /preview` validates the URL, runs yt-dlp in a threadpool,
+   caches the metadata, and renders every deliverable video and audio option.
+2. **Prepare** — clicking Download calls `/api/prepare`. This builds a
+   `DownloadPlan` (filename, MIME type, stream URLs, ffmpeg arguments, tags) and
+   returns a progress token plus the final `/download` URL. Planning is cheap
+   and side-effect free, so invalid choices fail before the browser starts
+   receiving bytes.
+3. **Download** — `/download` acquires a concurrency slot and opens exactly one
+   pipeline:
+   - **relay** for a single file that already contains video and audio;
+   - **ffmpeg** for merging separate video/audio streams or transcoding audio.
+4. **Progress** — the preview page polls `/api/progress/{token}`. The registry is
+   in memory, bounded to 512 entries, and pruned after an hour.
+5. **Cleanup** — the response ends, the slot is released, and no media file ever
+   existed on disk.
+
+### Module map
+
+| Path | Responsibility |
+| --- | --- |
+| `main.py` | App factory, routes, template context, security headers, concurrency gate |
+| `core/config.py` | Environment configuration, ffmpeg discovery, cookie-file validation |
+| `core/ytdlp.py` | URL validation, extraction, metadata normalization, format catalogs, friendly errors |
+| `core/download.py` | `DownloadPlan`, `build_plan()`, `prepare_stream()`, tagging rules |
+| `core/streaming.py` | `RelayStream` (range resume) and `FFmpegStream` (pipe) |
+| `core/progress.py` | Thread-safe, bounded progress registry |
+| `core/cover.py` | Thumbnail download and JPEG normalization |
+| `core/id3.py` | Dependency-free ID3v2.3 writer for non-seekable MP3 pipes |
+| `core/utils.py` | Human-readable sizes, durations, filenames and text cleanup |
+| `core/examples.py` | Curated landing-page examples |
+| `templates/` | Jinja2 pages: home, preview, error, base layout |
+| `static/` | CSS, JavaScript and icons |
+| `tests/` | Offline pytest suite |
+
+### Design principles
+
+- **Stream, do not store.** Every media byte travels from the origin to the
+  browser through the response iterator. Temporary files are limited to
+  short-lived cover art for FLAC tagging.
+- **Plan, then execute.** A download is validated before a response starts, so
+  errors surface as friendly HTML instead of a broken partial file.
+- **Local first.** The app binds to `127.0.0.1` and has no authentication by
+  design. Public hosting is explicitly out of scope.
+- **Boring dependencies.** yt-dlp absorbs platform churn; FastAPI and httpx
+  handle transport; ffmpeg handles media. There is no frontend build system.
+- **Errors are a feature.** Platform failures are translated into short,
+  actionable messages instead of raw extractor tracebacks.
+
+## Project structure
+
+```text
+.
+├── main.py                     # FastAPI application and routes
+├── core/
+│   ├── config.py               # Environment + binary discovery
+│   ├── cover.py                # Thumbnail → JPEG
+│   ├── download.py             # Plan building and execution
+│   ├── examples.py             # Curated landing-page videos
+│   ├── id3.py                  # ID3v2.3 writer
+│   ├── progress.py             # In-memory progress registry
+│   ├── streaming.py            # Relay and ffmpeg pipelines
+│   ├── utils.py                # Formatting and filename helpers
+│   └── ytdlp.py                # Extraction, validation, format catalogs
+├── templates/                  # Jinja2 pages
+├── static/                     # CSS, JavaScript, icons
+├── docs/                       # README screenshots
+├── tests/                      # Offline pytest suite
+├── .github/                    # CI, Dependabot, issue and PR templates
+├── run-reelrelay.bat / .ps1    # Windows launcher
+├── create-desktop-shortcut.*   # Windows shortcut creator
+├── health_check.py             # CLI health probe
+├── requirements.txt            # Runtime dependencies
+├── requirements-dev.txt        # Runtime + test dependencies
+├── .env.example                # Documented configuration
+├── CONTRIBUTING.md
+├── SECURITY.md
+├── CODE_OF_CONDUCT.md
+├── CHANGELOG.md
+└── LICENSE
+```
 
 ## Quick start
 
-```bash
-git clone <your-repo-url>
-cd youtube-url-processor
+### Windows: one click
 
-python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
+1. Double-click `create-desktop-shortcut.bat`.
+2. Double-click the **ReelRelay** icon on your desktop.
+3. The launcher creates `.venv` if needed, installs dependencies, starts the
+   server, and opens the browser.
 
-pip install -r requirements.txt
-# optional, for offline tests:
-pip install -r requirements-dev.txt
+Keep the console window open while you use the app. Close it (or press
+`Ctrl+C`) to stop ReelRelay.
 
-uvicorn main:app --host 127.0.0.1 --port 8080
-```
-
-Open <http://127.0.0.1:8080>. On Windows with the bundled environment:
+### Manual setup: Windows
 
 ```powershell
+git clone https://github.com/gullipalli-nagabhushan/ReelRelay.git
+cd ReelRelay
+
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8080
+```
+
+### Manual setup: macOS / Linux
+
+```bash
+git clone https://github.com/gullipalli-nagabhushan/ReelRelay.git
+cd ReelRelay
+
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+python -m uvicorn main:app --host 127.0.0.1 --port 8080
+```
+
+Open <http://127.0.0.1:8080>.
+
+### Verify the installation
+
+```bash
+curl http://127.0.0.1:8080/health
+```
+
+```powershell
+.\.venv\Scripts\python.exe health_check.py
+```
+
+A healthy response includes `"status": "healthy"`, the yt-dlp version, the
+configured maximum height, and whether ffmpeg and cookies are available.
+
+### Requirements
+
+| Requirement | Notes |
+| --- | --- |
+| Python 3.10+ | CI covers 3.10, 3.11 and 3.12 on Ubuntu and Windows. |
+| ffmpeg | Required for 4K/8K merging, MP3/FLAC/M4A/WAV conversion and cover embedding. Without it, only progressive video and original audio are offered. |
+| Internet | Needed for extraction and download; the test suite is offline. |
+| Windows 10/11 | Required only for the `.bat` / `.ps1` launchers. The app runs anywhere Python does. |
+
+Install ffmpeg:
+
+```powershell
+winget install Gyan.FFmpeg        # Windows
+```
+
+```bash
+brew install ffmpeg               # macOS
+sudo apt install ffmpeg           # Debian / Ubuntu
 ```
 
 ## Configuration
 
-Copy `.env.example` to `.env` (values are read from the process environment).
+Copy `.env.example` to `.env` and uncomment the settings you need. All values
+are optional; `python-dotenv` loads `.env` automatically at startup.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `MAX_VIDEO_HEIGHT` | `2160` | Highest height offered (144–4320). |
-| `MAX_CONCURRENT_DOWNLOADS` | `4` | Simultaneous streams; extra requests get `429`. |
+| `MAX_VIDEO_HEIGHT` | `4320` | Highest video height offered, 144–4320. Set `2160` for 4K-only. |
+| `MAX_CONCURRENT_DOWNLOADS` | `4` | Simultaneous streams. Extra requests receive `429`. |
 | `INFO_CACHE_TTL` | `600` | Seconds a yt-dlp metadata result is reused. |
-| `INFO_CACHE_SIZE` | `64` | Number of cached videos. |
-| `YTDLP_COOKIES_FILE` | — | Path to a Netscape cookies file (local / VPS). |
-| `YTDLP_COOKIES_B64` | — | Base64 of that file, written to a private temp file. Best for serverless hosts. |
-| `YTDLP_COOKIES` | — | Raw multiline Netscape cookie text. |
-| `YTDLP_PROXY` | — | Proxy used by yt-dlp. |
+| `INFO_CACHE_SIZE` | `64` | Maximum cached videos. |
+| `YTDLP_COOKIES_FILE` | — | Path to a Netscape `cookies.txt` for your own account. |
+| `YTDLP_PROXY` | — | Proxy used by yt-dlp, e.g. `http://user:pass@host:8080`. |
 | `FFMPEG_BINARY` | auto | Explicit ffmpeg path. |
 | `FFPROBE_BINARY` | auto | Explicit ffprobe path. |
 
-### Cookies (age-restricted, Instagram, Facebook)
+### Cookies
 
-1. Install the **Get cookies.txt LOCALLY** extension (Chrome / Firefox / Edge).
-2. Sign in to `youtube.com`, `instagram.com` or `facebook.com` in that browser and open
-   the account you want the server to use.
-3. Export `cookies.txt` in **Netscape** format for that site.
-4. Wire it up:
-   - Local / VPS: `YTDLP_COOKIES_FILE=/path/to/cookies.txt`.
-   - Vercel, Render, Cloud Run (no persistent disk): set `YTDLP_COOKIES_B64` to the
-     base64 of the file — recommended, because it survives newlines and tabs — or
-     `YTDLP_COOKIES` to the raw file contents.
+Most public media needs no cookies. `YTDLP_COOKIES_FILE` exists only for media
+that requires **your own** account: age-restricted videos, private posts, or
+Instagram/Facebook content behind a sign-in wall.
 
-   PowerShell: `[Convert]::ToBase64String([IO.File]::ReadAllBytes("cookies.txt"))`
-   Linux/macOS: `base64 -w0 cookies.txt`
+```ini
+YTDLP_COOKIES_FILE=C:\Users\you\Downloads\cookies.txt
+```
 
-On startup the app decodes the value into `$TMPDIR/reelrelay-cookies-<pid>.txt` with
-`0600` permissions and deletes it when the process exits. Cookies are never logged or
-written into the repository.
+> A Netscape cookie file is a login token. Keep it on your machine, never commit
+> it, never attach it to an issue, and use a throwaway account when possible.
+> `.env` is git-ignored for this reason.
 
-**Treat cookies like a password.** They grant full access to the account, so use a
-throwaway account, never commit them, and rotate or delete them when you are done.
+The file is validated at startup. A missing path logs a warning and is ignored
+rather than crashing the app.
 
-## How streaming works
+## HTTP API
 
-1. `POST /preview` runs yt-dlp (metadata only) and renders every available quality.
-2. A download click calls `GET /api/prepare`, which validates the choice and returns the
-   filename, MIME type, a progress token and the final `/download` URL.
-3. The browser starts a native download. `GET /download` opens one of two pipelines:
-   - **relay** — `httpx` proxies the media URL, forwarding bytes as they arrive. Truncated
-     connections are resumed with `Range: bytes=<sent>-`.
-   - **ffmpeg** — ffmpeg reads the source stream(s) and writes the container/transcode to
-     `pipe:1`; FastAPI forwards stdout to the client.
-4. MP3 tags (including APIC cover art) are prepended by a small ID3v2.3 writer, because
-   ffmpeg cannot write ID3 to a non-seekable pipe. FLAC/m4a/wav tags are written by ffmpeg.
-5. The page polls `/api/progress/{token}` for elapsed time, bytes, percentage and speed. This
-   state lives in memory only and is pruned automatically.
-
-Nothing is saved to disk. Exact `Content-Length` is advertised for direct relays; live
-ffmpeg output is chunked.
-
-## API
-
-The UI no longer links to these, but they remain available for automation.
+The web UI uses the same endpoints. They are intentionally unauthenticated
+because the app is expected to run on loopback.
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/` | Home page and URL form. |
+| `GET` | `/` | Landing page. |
 | `POST` | `/preview` | Form field `media_url`; renders the preview page. |
-| `GET` | `/api/info?url=…` | JSON metadata, video options and audio options. |
-| `GET` | `/api/prepare` | Validate a download choice; returns `plan`, `token` + `download_url`. |
-| `GET` | `/api/progress/{token}` | Live progress snapshot for one download. |
+| `GET` | `/api/info?url=…` | JSON metadata and all video/audio options. |
+| `GET` | `/api/prepare` | Validate a download choice; returns a plan, token and URL. |
+| `GET` | `/api/progress/{token}` | Snapshot for one download. |
 | `GET` | `/download` | Stream the selected media. |
-| `GET` | `/health` | Service status, active downloads, storage mode. |
+| `GET` | `/health` | Status, versions, ffmpeg and cookie state. |
+
+### Inspect a link
+
+```bash
+curl --get "http://127.0.0.1:8080/api/info" \
+  --data-urlencode "url=https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+```
+
+The response contains `ok`, `data.video_options`, `data.audio_options`,
+normalized metadata, and capability flags such as `has_4k`, `has_hdr`,
+`has_60fps` and `ffmpeg_ok`.
+
+### Prepare a download
+
+```bash
+curl --get "http://127.0.0.1:8080/api/prepare" \
+  --data-urlencode "url=https://www.youtube.com/watch?v=dQw4w9WgXcQ" \
+  --data-urlencode "kind=video" \
+  --data-urlencode "option=v1080-h264-mp4" \
+  --data-urlencode "token=demo-token"
+```
+
+Example response:
+
+```json
+{
+  "ok": true,
+  "plan": {
+    "filename": "Artist - Title [1080p].mp4",
+    "media_type": "video/mp4",
+    "quality": "1080p",
+    "mode": "video",
+    "size_label": "size varies",
+    "notes": ["Video and audio are muxed live while streaming — the first bytes take a few seconds."]
+  },
+  "download_url": "/download?url=...&kind=video&option=v1080-h264-mp4&token=demo-token",
+  "token": "demo-token"
+}
+```
+
+### Download parameters
 
 `/api/prepare` and `/download` accept:
 
-```
-url, kind=video|audio, token, option, height, container, profile, format_id,
-embed_tags=0|1, embed_cover=0|1,
-title, artist, album, composer, genre, year, track
+| Parameter | Values | Notes |
+| --- | --- | --- |
+| `url` | platform URL | Required. |
+| `kind` | `video` \| `audio` | Default `video`. |
+| `option` | option id | Preferred selection; use the id returned by `/api/info`. |
+| `height` | 144–4320 | Fallback selection when no `option` is given. |
+| `container` | `mp4` \| `webm` \| `mkv` \| `m4v` | Video container override. |
+| `profile` | e.g. `mp3_320`, `flac`, `wav`, `original` | Audio profile. |
+| `format_id` | yt-dlp format id | Explicit audio stream selection. |
+| `embed_tags` | `true` \| `false` | Audio tags, default `true`. |
+| `embed_cover` | `true` \| `false` | Cover art, default `true`. |
+| `token` | up to 64 chars | Enables progress tracking. |
+| `title`, `artist`, `album`, `composer`, `genre`, `year`, `track` | text | Override derived metadata. |
+
+### Progress snapshots
+
+```json
+{
+  "ok": true,
+  "token": "demo-token",
+  "state": "streaming",
+  "sent": 184549376,
+  "total": 734003200,
+  "percent": 25.1,
+  "elapsed": 42.3,
+  "speed": 4369066,
+  "eta": 126.0,
+  "stalled": false
+}
 ```
 
-## Tests
+States are `preparing`, `streaming`, `done` and `error`. When the total is an
+estimate, `total_is_estimate` is `true` and the percentage is capped below 100
+until the response actually completes.
 
-The test suite is fully offline (synthetic yt-dlp payloads and a fake HTTP origin):
+## Download pipeline
+
+### Relay mode
+
+Used for progressive files (video + audio in one stream), Instagram/Facebook
+media, and the "Original stream" audio option. `httpx` opens the CDN URL with
+the extractor's headers and forwards 64 KiB chunks. If the connection drops
+mid-body, `RelayStream` reopens the URL with `Range: bytes=<sent>-` and
+continues, up to 10 times. `Content-Length` is advertised when the origin
+provides it.
+
+### ffmpeg mode
+
+Used for:
+
+- merging separate video and audio streams (typically 1080p and above);
+- converting audio to MP3, FLAC, M4A or WAV;
+- copying the audio track out of a progressive video.
+
+ffmpeg reads the source URL(s) with reconnect flags and writes to `pipe:1`.
+Because the output is non-seekable, MP3 tags are prepended by `core/id3.py`
+instead of ffmpeg. FLAC cover art uses a short-lived JPEG temp file that is
+deleted immediately after the request.
+
+### Concurrency and caching
+
+- A `threading.BoundedSemaphore` limits active downloads to
+  `MAX_CONCURRENT_DOWNLOADS`; excess requests get HTTP `429`.
+- yt-dlp extraction runs in Starlette's threadpool so the event loop stays
+  responsive.
+- Metadata is cached in a small thread-safe LRU-style cache with a TTL.
+- Progress is in memory only and per process. Run **one** worker: multiple
+  Uvicorn workers would split the cache, progress registry and semaphore.
+
+## Testing
+
+Install the development dependencies and run the suite:
 
 ```bash
 pip install -r requirements-dev.txt
-pytest
+python -m pytest -q
 ```
 
-It covers multi-platform URL validation, metadata derivation, format discovery (including
-progressive-only media), download planning, the progress registry, the ID3 writer, and
-RelayStream range-resume behaviour.
+The tests are completely offline:
 
-## Docker
+- synthetic yt-dlp payloads in `tests/conftest.py`;
+- a fake HTTP origin for relay and range-resume tests;
+- monkeypatched ffmpeg availability, so no local binary is required.
+
+Coverage areas include URL validation and platform detection, metadata
+derivation, format discovery, progressive-only media, download planning, tag
+handling, the ID3 writer, progress snapshots, and `RelayStream` resume logic.
+
+CI runs the same suite on Ubuntu and Windows with Python 3.10, 3.11 and 3.12,
+byte-compiles `main.py` and `core/`, and validates the PowerShell launchers on
+Windows.
+
+### Adding tests
+
+- Add a regression test for every bug fix.
+- Keep new tests offline — never call a live platform or CDN.
+- Prefer the shared fixtures in `tests/conftest.py`.
+- For ffmpeg-dependent code, monkeypatch `config.FFMPEG_OK` and
+  `config.FFMPEG` rather than requiring ffmpeg.
+
+## Development workflow
 
 ```bash
-docker build -t reelrelay .
-docker run --rm -p 8000:8000 reelrelay
+git switch -c feat/my-change
+# edit code and tests
+python -m pytest -q
+git commit -m "feat: describe the change"
 ```
 
-The image installs ffmpeg and runs as a non-root user. The build only copies the
-application (see `.dockerignore`).
+Run with auto-reload while developing:
 
-For a public deployment, use the ready-made kit in [`deploy/`](deploy/README.md):
-Docker Compose + Caddy with automatic HTTPS, a systemd alternative, Oracle Cloud
-instructions and firewall/DNS/cookie checklists.
-
-## Platform notes
-
-- `Procfile` and `runtime.txt` are included for Heroku-style platforms.
-- PythonAnywhere works with an ASGI/uvicorn setup, but streaming long downloads may hit
-  platform time limits; a VPS or container host is a better fit.
-- Media URLs expire after a few hours. If a download fails, reload the preview and try again.
-- Instagram and Facebook often require cookies (`YTDLP_COOKIES_B64` on serverless,
-  `YTDLP_COOKIES_FILE` elsewhere) for anything beyond public posts, and may only expose a
-  progressive video file.
-- M4A in a streamed MP4 container carries tags but not cover art; use MP3 or FLAC for
-  artwork. WAV has no composer or cover-art slot.
-- Age-restricted or members-only content requires cookies.
-- Vercel/Netlify are a poor fit for this app: serverless functions cap request duration
-  (60s on Vercel Hobby), do not ship ffmpeg, and only allow ephemeral `/tmp` writes.
-  Use a container host or a small VPS for reliable 4K downloads.
-
-## Project layout
-
-```
-main.py              FastAPI routes, progress endpoint and streaming response
-core/config.py       environment-driven settings
-core/ytdlp.py        multi-platform extraction, metadata and format catalogs
-core/download.py     download plans, ffmpeg commands, tag defaults
-core/streaming.py    RelayStream (Range resume) + FFmpegStream
-core/progress.py     in-memory download progress registry
-core/id3.py          ID3v2.3 writer with APIC cover art
-core/cover.py        thumbnail selection / fetching
-core/utils.py        filenames, sizes, durations, RFC 6266 headers
-templates/           Jinja2 pages
-static/              CSS and JS
-deploy/              Docker Compose + Caddy + systemd deployment kit
-tests/               offline pytest suite
+```bash
+uvicorn main:app --reload --host 127.0.0.1 --port 8080
 ```
 
-## Legal
+Guidelines:
 
-Download only content you have the right to save. Respect each platform's Terms of Service
-and copyright law.
+- Python 3.10+, type hints on public functions, four-space indentation.
+- Keep the plan/execute split: validate in `build_plan()`, stream in
+  `prepare_stream()`.
+- Never write media to disk and never log cookies or authenticated URLs.
+- Keep platform-specific logic in `core/ytdlp.py`; keep the UI free of build
+  tooling.
+- Update `.env.example` and this README when adding a setting.
+- Update `CHANGELOG.md` for user-visible changes.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide, commit conventions
+and pull-request checklist.
+
+## Troubleshooting
+
+| Symptom | Likely cause | Fix |
+| --- | --- | --- |
+| `Python was not found` | Python missing from `PATH` | Install Python 3.10+, tick **Add Python to PATH**, reopen the terminal. |
+| Launcher closes immediately | Startup error | Run `run-reelrelay.bat` from a terminal to see the traceback. |
+| Browser does not open | Port busy or slow start | Open `http://127.0.0.1:8080` manually; the launcher prints the chosen port. |
+| `ffmpeg was not found` | Binary missing | Install ffmpeg and restart the app. |
+| `Sign in to confirm you're not a bot` | IP reputation / platform challenge | Update yt-dlp first. Public media may work later; private media needs your own cookie file. |
+| `Media link expired` | CDN URL TTL | Reload the preview and download again. |
+| Download stalls at 0% | ffmpeg preparing output | Wait for the first byte; the UI detects stalls. Try a lower quality if it persists. |
+| 429 response | Concurrency limit reached | Wait for a download to finish or raise `MAX_CONCURRENT_DOWNLOADS`. |
+| Instagram/Facebook public post fails | Extractor or IP blocking | Update yt-dlp; retry later; a proxy may help. |
+| Progress jumps back to "check your downloads" | Instance restarted or token expired | The download may still complete in the browser; check your downloads folder. |
+| Antivirus flags the launcher | Unsigned PowerShell script | Allow the script for this folder; it only starts the local app. |
+
+Capture a diagnostic snapshot while the app is running:
+
+```bash
+python health_check.py
+```
+
+## Privacy and security
+
+- **No telemetry.** No analytics, accounts, crash reporting or cloud storage.
+- **No media retention.** Files are streamed to the browser; the app keeps no
+  copy.
+- **Loopback binding.** The server binds to `127.0.0.1`. Do not expose it to the
+  internet without authentication and TLS.
+- **Cookies are optional.** A cookie file is read only from
+  `YTDLP_COOKIES_FILE`, never logged, and never written into the repository.
+- **Credential hygiene.** `.env` and cookie files are git-ignored. Use a
+  throwaway account for authenticated tests.
+- **Dependency updates.** Dependabot watches pip and GitHub Actions; yt-dlp
+  should be updated regularly because platforms change often.
+
+Report vulnerabilities privately through
+[GitHub Security Advisories](https://github.com/gullipalli-nagabhushan/ReelRelay/security/advisories/new).
+See [SECURITY.md](SECURITY.md) for scope, response expectations and a hardening
+checklist.
+
+### Public hosting
+
+ReelRelay is **not** designed as a public service. It has no authentication,
+no per-user isolation, no persistent job queue, and a datacenter IP is likely to
+be challenged by the platforms. If you self-host anyway, put it behind a
+reverse proxy with HTTPS and authentication, restrict access by firewall, and
+run one worker.
+
+## Frequently asked questions
+
+### Do I need an account or a subscription?
+
+No. ReelRelay is free, local and has no sign-up. A platform account is only
+relevant for media that requires one, such as age-restricted or private posts.
+
+### What is the highest quality I can download?
+
+Up to 4320p (8K) when the source offers it. A 1080p upload cannot become 8K.
+High resolutions usually need ffmpeg to merge separate video and audio streams.
+
+### Where do my files go?
+
+Wherever your browser saves downloads, normally your **Downloads** folder.
+ReelRelay itself writes no media anywhere.
+
+### Why does it say "sign in required" or "age-restricted"?
+
+The media is private, age-gated or members-only. If it is your own account,
+export a Netscape `cookies.txt` and set `YTDLP_COOKIES_FILE`. If it belongs to
+someone else and is private, there is no legitimate workaround.
+
+### It says ffmpeg is missing. What now?
+
+Install it with `winget install Gyan.FFmpeg` (Windows), `brew install ffmpeg`
+(macOS), or `sudo apt install ffmpeg` (Debian/Ubuntu), then restart ReelRelay.
+Single-file video and original audio still work without ffmpeg.
+
+### Can I download just the audio?
+
+Yes. Choose MP3, FLAC, M4A, WAV or the untouched original stream. MP3 and FLAC
+provide the most reliable cover art.
+
+### Is downloading videos legal?
+
+It depends on your jurisdiction and the content. Save only material you own,
+material under a permissive licence, or material you have permission to
+download. Respect copyright law and each platform's terms. You are responsible
+for your use of the tool.
+
+### How do I update yt-dlp?
+
+```bash
+python -m pip install -U yt-dlp
+```
+
+Then restart the app. If a previously working link fails, update yt-dlp first.
+
+### How do I uninstall it?
+
+Delete the repository folder and the desktop shortcut. Nothing is installed
+system-wide. Browser downloads are separate files and are not touched.
+
+## Contributing
+
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) and the
+[Code of Conduct](CODE_OF_CONDUCT.md) before opening a pull request.
+
+Good first issues:
+
+- add a synthetic test for an uncovered extractor shape;
+- improve a user-facing error message;
+- document a platform quirk;
+- add a test for a new audio profile or container.
+
+Please keep the local-first, zero-storage design intact. Pull requests that
+write media to disk, add telemetry, or expose the app publicly by default will
+not be merged.
+
+## License
+
+Released under the [MIT License](LICENSE).
+
+Copyright © 2026 Gullipalli Nagabhushan.
+
+## Acknowledgements
+
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) — extraction and format discovery.
+- [FastAPI](https://fastapi.tiangolo.com/) and [Starlette](https://www.starlette.io/) — web framework and streaming responses.
+- [httpx](https://www.python-httpx.org/) — relay transport.
+- [ffmpeg](https://ffmpeg.org/) — muxing, transcoding and cover art.
+- [Bootstrap](https://getbootstrap.com/) and [Bootstrap Icons](https://icons.getbootstrap.com/) — UI.
+- [pytest](https://pytest.org/) — offline test suite.

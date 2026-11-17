@@ -6,7 +6,7 @@ Design goals
 * Rich preview with every available video quality and audio profile.
 * Audio downloads carry artist / album / composer / year tags and cover art.
 * Downloads are **streamed straight to the browser**.  Media is never written
-  to server storage, so nothing is left behind after the request ends.
+  to disk storage, so nothing is left behind after the request ends.
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 
 from core import config
 from core.download import DownloadPlan, build_plan, prepare_stream
+from core.examples import get_examples
 from core.progress import progress
 from core.streaming import DownloadError
 from core.utils import compact_number, content_disposition, human_duration, human_size
@@ -59,7 +60,7 @@ async def lifespan(app: FastAPI):
     )
     if not config.FFMPEG_OK:
         logger.warning(
-            "ffmpeg was not found. 4K merging and MP3/FLAC/M4A/WAV conversion are disabled. "
+            "ffmpeg was not found. 8K merging and MP3/FLAC/M4A/WAV conversion are disabled. "
             "Install ffmpeg and restart to unlock every format."
         )
     yield
@@ -69,7 +70,7 @@ app = FastAPI(
     title=config.APP_NAME,
     description=(
         "Inspect and stream video or tagged audio from YouTube, Instagram and "
-        "Facebook straight to the browser. Nothing is stored on the server."
+        "Facebook straight to the browser. Nothing is stored on disk."
     ),
     version=config.APP_VERSION,
     lifespan=lifespan,
@@ -191,6 +192,7 @@ def _collect_tags(
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     context = _base_context(request)
+    context["examples"] = get_examples()
     return templates.TemplateResponse(request=request, name="index.html", context=context)
 
 
@@ -358,10 +360,10 @@ async def download(
 
     if not _acquire_slot():
         if token:
-            progress.finish(token, "The server is busy. Wait a moment and try again.")
+            progress.finish(token, "ReelRelay is busy. Wait a moment and try again.")
         return _error_response(
             request,
-            "The server is already streaming the maximum number of downloads.",
+            "ReelRelay is already streaming the maximum number of downloads.",
             status_code=429,
             hint="Wait for a download to finish, then try again.",
         )
@@ -502,4 +504,4 @@ async def health():
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host="0.0.0.0", port=8080, reload=False)
+    uvicorn.run("main:app", host="127.0.0.1", port=8080, reload=False)

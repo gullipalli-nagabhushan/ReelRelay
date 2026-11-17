@@ -35,6 +35,35 @@ def test_video_catalog_includes_4k_and_1080p(sample_info: dict, ffmpeg_enabled: 
     assert by_id["v1080-h264-mp4"]["recommended"] is True
 
 
+def test_video_catalog_includes_8k_when_configured(
+    sample_info: dict, monkeypatch: pytest.MonkeyPatch, ffmpeg_enabled: None
+) -> None:
+    monkeypatch.setattr(config, "MAX_VIDEO_HEIGHT", 4320)
+    sample_info["formats"].insert(
+        0,
+        {
+            "format_id": "571",
+            "ext": "webm",
+            "protocol": "https",
+            "vcodec": "vp9",
+            "acodec": "none",
+            "width": 7680,
+            "height": 4320,
+            "fps": 60,
+            "tbr": 50000,
+            "filesize": 2_000_000_000,
+            "url": "https://media.example/571.webm",
+        },
+    )
+
+    options = build_video_options(sample_info)
+    by_id = {option["id"]: option for option in options}
+
+    assert "v4320-vp9-webm" in by_id
+    assert by_id["v4320-vp9-webm"]["tier"] == "8K"
+    assert by_id["v4320-vp9-webm"]["height"] == 4320
+
+
 def test_video_catalog_without_ffmpeg_uses_progressive(
     sample_info: dict, monkeypatch: pytest.MonkeyPatch
 ) -> None:

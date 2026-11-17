@@ -2680,3 +2680,227 @@ a:hover {
         margin-top: 0.6rem;
     }
 }
+
+/* ---------- Landing: nav anchors & section intros ------------------------ */
+
+.nav-link-anchor {
+    color: var(--text-soft);
+    font-size: 0.86rem;
+    font-weight: 600;
+    text-decoration: none;
+    padding: 0.35rem 0.55rem;
+    border-radius: 999px;
+    transition: color 0.2s ease, background 0.2s ease;
+}
+
+.nav-link-anchor:hover,
+.nav-link-anchor:focus-visible {
+    color: var(--text);
+    background: var(--surface);
+    text-decoration: none;
+}
+
+.section-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-bottom: 0.55rem;
+    color: var(--rose-soft);
+    font-size: 0.76rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.section-sub {
+    max-width: 62ch;
+    margin: 0.55rem 0 0;
+    color: var(--muted);
+    font-size: 0.92rem;
+    line-height: 1.6;
+}
+
+/* ---------- Landing: example videos -------------------------------------- */
+
+.examples {
+    margin-top: 4.2rem;
+    scroll-margin-top: 1.5rem;
+}
+
+.example-group {
+    margin-top: 1.6rem;
+}
+
+.example-group-head {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    margin-bottom: 0.85rem;
+}
+
+.example-group-head h3 {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+}
+
+.example-group-head h3 i {
+    color: var(--cyan);
+}
+
+.example-group-head .chip {
+    margin-left: auto;
+    color: var(--muted);
+    border-style: dashed;
+}
+
+.example-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.9rem;
+}
+
+.example-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    padding: 0;
+    overflow: hidden;
+    text-align: left;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.02));
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text);
+    cursor: pointer;
+    transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.example-card:hover,
+.example-card:focus-visible {
+    transform: translateY(-3px);
+    border-color: var(--border-strong);
+    box-shadow: 0 14px 34px rgba(0, 0, 0, 0.35);
+    outline: none;
+}
+
+.example-thumb {
+    position: relative;
+    display: block;
+    aspect-ratio: 16 / 9;
+    background: #0c0f18;
+    overflow: hidden;
+}
+
+.example-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: transform 0.25s ease, opacity 0.25s ease;
+    opacity: 0.92;
+}
+
+.example-card:hover .example-thumb img {
+    transform: scale(1.04);
+    opacity: 1;
+}
+
+.example-play {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    color: #fff;
+    background: linear-gradient(180deg, rgba(5, 6, 11, 0.05), rgba(5, 6, 11, 0.55));
+}
+
+.example-play i {
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    font-size: 1.3rem;
+    padding-left: 3px;
+    border-radius: 50%;
+    background: rgba(255, 59, 92, 0.92);
+    box-shadow: 0 8px 22px rgba(255, 59, 92, 0.4);
+    transition: transform 0.18s ease;
+}
+
+.example-card:hover .example-play i {
+    transform: scale(1.08);
+}
+
+.example-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.18rem;
+    padding: 0.75rem 0.85rem 0.85rem;
+}
+
+.example-title {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    font-size: 0.86rem;
+    font-weight: 600;
+    line-height: 1.35;
+}
+
+.example-meta {
+    color: var(--text-soft);
+    font-size: 0.74rem;
+    line-height: 1.4;
+}
+
+.example-meta-dim {
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+}
+
+/* ---------- Landing: FAQ spacing ----------------------------------------- */
+
+.faq {
+    scroll-margin-top: 1.5rem;
+}
+
+.faq .accordion-body a {
+    color: var(--cyan);
+}
+
+@media (max-width: 1024px) {
+    .example-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 860px) {
+    .example-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .example-play i {
+        width: 38px;
+        height: 38px;
+        font-size: 1.1rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .example-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .example-group-head {
+        flex-wrap: wrap;
+    }
+
+    .example-group-head .chip {
+        margin-left: 0;
+    }
+}

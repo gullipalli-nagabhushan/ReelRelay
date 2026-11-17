@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ping the health endpoint of a running ReelRelay server.
+"""Ping the health endpoint of a running ReelRelay instance.
 
 Usage:
     python health_check.py [http://127.0.0.1:8080/health]

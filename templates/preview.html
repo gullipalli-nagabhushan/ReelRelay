@@ -108,7 +108,7 @@
             </div>
             <div class="stream-badge">
                 <i class="bi bi-hdd-network"></i>
-                <span><strong>Zero server storage</strong><small>Nothing is written to disk</small></span>
+                <span><strong>Zero storage</strong><small>Nothing is written to disk</small></span>
             </div>
         </header>
 
@@ -116,7 +116,7 @@
         <div class="notice notice-warning">
             <i class="bi bi-exclamation-triangle"></i>
             <div>
-                <strong>ffmpeg is not installed on this server.</strong>
+                <strong>ffmpeg is not installed on this computer.</strong>
                 Only single-file video streams and the original audio stream are available. Install ffmpeg
                 to unlock muxing, MP3, FLAC, M4A and WAV.
             </div>
@@ -629,7 +629,7 @@
             if (overlay) overlay.classList.add('is-done');
             if (eyebrowEl) eyebrowEl.innerHTML = '<i class="bi bi-check-circle"></i> Download complete';
             if (titleEl) titleEl.textContent = (data && data.filename) || (lastButton && lastButton.dataset.label) || 'Download complete';
-            if (detailEl) detailEl.textContent = 'Saved to your downloads folder. Nothing was stored on the server.';
+            if (detailEl) detailEl.textContent = 'Saved to your downloads folder. ReelRelay kept no copy.';
             if (percentEl) percentEl.textContent = '100%';
             if (speedEl) speedEl.textContent = 'Done';
             if (sizeEl && data) {

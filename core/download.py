@@ -150,7 +150,7 @@ def _ffmpeg_input(fmt: dict[str, Any], platform: str | None = None) -> list[str]
 def _ffmpeg_base() -> list[str]:
     if not config.FFMPEG:
         raise UnavailableError(
-            "ffmpeg is not installed on the server, so this format cannot be generated."
+            "ffmpeg is not installed on this computer, so this format cannot be generated."
         )
     return [
         config.FFMPEG,

@@ -1,6 +1,6 @@
 """Cover-art retrieval.
 
-The video thumbnail is fetched through the server (so the user's browser
+The video thumbnail is fetched through the local app (so the user's browser
 never needs to talk to Google) and normalised to JPEG, which is what every
 tag reader understands.  The image is kept in memory; nothing is written to
 disk unless ffmpeg explicitly needs a file input (FLAC cover embedding), in

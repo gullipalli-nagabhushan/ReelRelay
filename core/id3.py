@@ -1,7 +1,7 @@
 """Minimal, dependency-free ID3v2.3 writer.
 
 ffmpeg cannot write an ID3 tag to a *non-seekable* pipe (which is exactly what
-we use so nothing is stored on the server).  We therefore ask ffmpeg for the
+we use so nothing is written to disk).  We therefore ask ffmpeg for the
 raw MP3 frames and prepend a standards-compliant ID3v2.3 tag ourselves.  That
 tag carries the title, artist, album, composer, year, genre and — most
 importantly — the cover art as an APIC frame.

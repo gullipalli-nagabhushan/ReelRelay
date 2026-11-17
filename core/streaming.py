@@ -56,7 +56,7 @@ def _friendly_http_error(status: int, body: bytes) -> str:
     if status == 410:
         return "The media link expired. Reload the preview and try again."
     if status == 429:
-        return "The source is rate-limiting the server. Wait a minute and try again."
+        return "The source is rate-limiting your connection. Wait a minute and try again."
     if "sign in" in text or "login" in text:
         return "The source requires a sign-in for this media (cookies are not configured)."
     return f"The media server returned HTTP {status} for this stream."
@@ -67,7 +67,7 @@ class _RangeNotSatisfiable(Exception):
 
 
 class RelayStream:
-    """Proxy a direct media URL without buffering it on the server.
+    """Proxy a direct media URL without buffering it on disk.
 
     Google's CDN occasionally drops a connection mid-body.  Because the bytes
     have already been handed to the browser, the only way to recover is to ask
@@ -526,7 +526,7 @@ def _friendly_ffmpeg_error(stderr: str) -> str:
     if "invalid data found" in text:
         return "The selected stream could not be decoded. Try another quality."
     if "no such file" in text:
-        return "The server is missing ffmpeg. Install ffmpeg and restart the app."
+        return "ffmpeg is missing on this computer. Install ffmpeg and restart the app."
     if stderr:
         last_line = stderr.strip().splitlines()[-1]
         return f"Media conversion failed: {last_line[:300]}"

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/gullipalli-nagabhushan/ReelRelay/security/advisories/new
+    about: Report security issues privately. Do not open a public issue.
+  - name: Documentation and FAQ
+    url: https://github.com/gullipalli-nagabhushan/ReelRelay#frequently-asked-questions
+    about: Setup help, supported formats, troubleshooting and privacy answers.
