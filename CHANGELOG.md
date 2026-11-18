@@ -18,7 +18,10 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 - Minimum supported Python is now 3.11, which current yt-dlp releases require.
   The Windows launcher rebuilds a `.venv` that was created with Python 3.10.
-- CI matrix now covers Python 3.11, 3.12 and 3.13.
+- CI matrix now covers Python 3.11 through 3.15.
+- `uvicorn` extras are listed explicitly instead of via `uvicorn[standard]`,
+  because its `pyyaml` dependency has no wheels for Python 3.15 and needed a
+  C compiler to install.
 - README rewritten for developers: architecture, request lifecycle, API,
   testing, contribution workflow and troubleshooting.
 

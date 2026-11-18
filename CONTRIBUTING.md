@@ -64,7 +64,7 @@ Guidelines:
 - Prefer small, focused tests over end-to-end tests that need ffmpeg.
 - Monkeypatch `config.FFMPEG_OK` / `config.FFMPEG` instead of requiring a local
   ffmpeg binary.
-- CI runs the suite on Ubuntu and Windows with Python 3.11, 3.12 and 3.13.
+- CI runs the suite on Ubuntu and Windows with Python 3.11 through 3.15.
 
 The current suite covers URL validation, metadata derivation, format discovery,
 download planning, progress tracking, the ID3 writer, and resumable relay
