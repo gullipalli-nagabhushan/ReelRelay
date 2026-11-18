@@ -9,7 +9,7 @@ your browser — up to **8K video**, or fully tagged audio with cover art.
 
 [![CI](https://github.com/gullipalli-nagabhushan/ReelRelay/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gullipalli-nagabhushan/ReelRelay/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#requirements)
 
 [Quick start](#quick-start) ·
@@ -195,7 +195,7 @@ flowchart LR
 
 1. Double-click `create-desktop-shortcut.bat`.
 2. Double-click the **ReelRelay** icon on your desktop.
-3. The launcher creates `.venv` if needed, installs dependencies, starts the
+3. The launcher creates or rebuilds `.venv`, installs dependencies, starts the
    server, and opens the browser.
 
 Keep the console window open while you use the app. Close it (or press
@@ -243,7 +243,7 @@ configured maximum height, and whether ffmpeg and cookies are available.
 
 | Requirement | Notes |
 | --- | --- |
-| Python 3.10+ | CI covers 3.10, 3.11 and 3.12 on Ubuntu and Windows. |
+| Python 3.11+ | Required by current yt-dlp releases. CI covers 3.11, 3.12 and 3.13 on Ubuntu and Windows. |
 | ffmpeg | Required for 4K/8K merging, MP3/FLAC/M4A/WAV conversion and cover embedding. Without it, only progressive video and original audio are offered. |
 | Internet | Needed for extraction and download; the test suite is offline. |
 | Windows 10/11 | Required only for the `.bat` / `.ps1` launchers. The app runs anywhere Python does. |
@@ -438,7 +438,7 @@ Coverage areas include URL validation and platform detection, metadata
 derivation, format discovery, progressive-only media, download planning, tag
 handling, the ID3 writer, progress snapshots, and `RelayStream` resume logic.
 
-CI runs the same suite on Ubuntu and Windows with Python 3.10, 3.11 and 3.12,
+CI runs the same suite on Ubuntu and Windows with Python 3.11, 3.12 and 3.13,
 byte-compiles `main.py` and `core/`, and validates the PowerShell launchers on
 Windows.
 
@@ -467,7 +467,7 @@ uvicorn main:app --reload --host 127.0.0.1 --port 8080
 
 Guidelines:
 
-- Python 3.10+, type hints on public functions, four-space indentation.
+- Python 3.11+, type hints on public functions, four-space indentation.
 - Keep the plan/execute split: validate in `build_plan()`, stream in
   `prepare_stream()`.
 - Never write media to disk and never log cookies or authenticated URLs.
@@ -483,10 +483,11 @@ and pull-request checklist.
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| `Python was not found` | Python missing from `PATH` | Install Python 3.10+, tick **Add Python to PATH**, reopen the terminal. |
+| `Python was not found` | Python missing from `PATH` | Install Python 3.11+, tick **Add Python to PATH**, reopen the terminal. |
 | Launcher closes immediately | Startup error | Run `run-reelrelay.bat` from a terminal to see the traceback. |
 | Browser does not open | Port busy or slow start | Open `http://127.0.0.1:8080` manually; the launcher prints the chosen port. |
 | `ffmpeg was not found` | Binary missing | Install ffmpeg and restart the app. |
+| `Failed building wheel for pydantic-core` / `httptools` | A free-threaded (`3.13t`) or unsupported Python build has no prebuilt wheels | Install the standard Python 3.11–3.13 build, delete `.venv`, and start the launcher again. |
 | `Sign in to confirm you're not a bot` | IP reputation / platform challenge | Update yt-dlp first. Public media may work later; private media needs your own cookie file. |
 | `Media link expired` | CDN URL TTL | Reload the preview and download again. |
 | Download stalls at 0% | ffmpeg preparing output | Wait for the first byte; the UI detects stalls. Try a lower quality if it persists. |

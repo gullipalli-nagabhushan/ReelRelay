@@ -64,7 +64,7 @@ Guidelines:
 - Prefer small, focused tests over end-to-end tests that need ffmpeg.
 - Monkeypatch `config.FFMPEG_OK` / `config.FFMPEG` instead of requiring a local
   ffmpeg binary.
-- CI runs the suite on Ubuntu and Windows with Python 3.10, 3.11 and 3.12.
+- CI runs the suite on Ubuntu and Windows with Python 3.11, 3.12 and 3.13.
 
 The current suite covers URL validation, metadata derivation, format discovery,
 download planning, progress tracking, the ID3 writer, and resumable relay
@@ -72,7 +72,7 @@ behaviour.
 
 ## Project conventions
 
-- Target Python 3.10+ and keep `from __future__ import annotations` in modules
+- Target Python 3.11+ and keep `from __future__ import annotations` in modules
   that use modern type syntax.
 - Type hints are expected on public functions.
 - Keep the app streaming: do **not** write downloaded media to disk. Temporary

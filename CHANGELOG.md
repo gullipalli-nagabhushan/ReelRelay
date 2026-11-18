@@ -16,8 +16,19 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Changed
 
+- Minimum supported Python is now 3.11, which current yt-dlp releases require.
+  The Windows launcher rebuilds a `.venv` that was created with Python 3.10.
+- CI matrix now covers Python 3.11, 3.12 and 3.13.
 - README rewritten for developers: architecture, request lifecycle, API,
   testing, contribution workflow and troubleshooting.
+
+### Fixed
+
+- Windows launcher no longer stops on a fresh install when Python writes to
+  stderr while the launcher checks dependencies.
+- The launcher skips free-threaded Python builds (`3.13t`), which have no
+  prebuilt wheels for `pydantic-core`, `httptools`, `watchfiles` or `pyyaml`,
+  and rebuilds an existing `.venv` that uses one.
 
 ## [3.0.0] - 2026-11-17
 
