@@ -64,6 +64,11 @@ venv.bak/
 *.swo
 *~
 
+# Type-checker / linter caches
+.ruff_cache/
+.mypy_cache/
+.pyright/
+
 # macOS
 .DS_Store
 
