@@ -14,4 +14,10 @@
     <string name="saved">Saved to Downloads/ReelRelay</string>
     <string name="storage_permission">Storage permission is needed to save on this Android version.</string>
     <string name="startup">Starting the on-device engine…</string>
+    <string name="cookies_title">Instagram &amp; Facebook</string>
+    <string name="cookies_missing">Private or login-only posts need a cookies.txt from your browser.</string>
+    <string name="cookies_loaded">cookies.txt imported — private posts use your session.</string>
+    <string name="cookies_import">Import cookies.txt</string>
+    <string name="cookies_clear">Remove</string>
+    <string name="cookies_invalid">That file is not a cookies.txt export.</string>
 </resources>

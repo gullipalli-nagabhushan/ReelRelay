@@ -30,6 +30,7 @@ class DownloadRepository(private val context: Context) {
         title: String,
         choice: FormatChoice,
         processId: String,
+        cookiesPath: String? = null,
         onProgress: (Float, Long, String) -> Unit,
     ): File = withContext(Dispatchers.IO) {
         val workDir = File(context.cacheDir, "reelrelay-$processId")
@@ -50,7 +51,7 @@ class DownloadRepository(private val context: Context) {
             }
             accelerated?.delete()
             workDir.listFiles()?.forEach { it.delete() }
-            runYtDlp(url, choice, workDir, processId, onProgress)
+            runYtDlp(url, choice, workDir, processId, cookiesPath, onProgress)
         } catch (t: Throwable) {
             workDir.deleteRecursively()
             throw t
@@ -63,6 +64,7 @@ class DownloadRepository(private val context: Context) {
         choice: FormatChoice,
         workDir: File,
         processId: String,
+        cookiesPath: String?,
         onProgress: (Float, Long, String) -> Unit,
     ): File {
         val request = YoutubeDLRequest(url)
@@ -72,14 +74,22 @@ class DownloadRepository(private val context: Context) {
         request.addOption("--no-part")
         request.addOption("-o", File(workDir, "%(title).150B.%(ext)s").absolutePath)
         request.addOption("-f", choice.formatSelector)
+        if (!cookiesPath.isNullOrBlank()) {
+            request.addOption("--cookies", cookiesPath)
+        }
 
-        if (choice.mergeToMp4) {
-            request.addOption("--merge-output-format", "mp4")
+        choice.mergeTo?.let { container ->
+            request.addOption("--merge-output-format", container)
         }
         choice.extractAudioFormat?.let { format ->
             request.addOption("--extract-audio")
             request.addOption("--audio-format", format)
-            request.addOption("--audio-quality", "0")
+            when {
+                choice.extractAudioBitrate > 0 ->
+                    request.addOption("--audio-quality", "${choice.extractAudioBitrate}K")
+                format == "flac" || format == "wav" -> Unit
+                else -> request.addOption("--audio-quality", "0")
+            }
         }
 
         YoutubeDL.getInstance().execute(request, processId) { progress, eta, line ->

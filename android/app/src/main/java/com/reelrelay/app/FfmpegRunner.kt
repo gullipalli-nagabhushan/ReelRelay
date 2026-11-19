@@ -16,42 +16,61 @@ import java.io.File
  */
 object FfmpegRunner {
 
-    suspend fun merge(context: Context, video: File, audio: File, output: File) {
-        run(
-            context,
-            listOf(
-                "-y",
-                "-i", video.absolutePath,
-                "-i", audio.absolutePath,
-                "-map", "0:v:0",
-                "-map", "1:a:0",
-                "-c", "copy",
-                "-movflags", "+faststart",
-                output.absolutePath,
-            ),
+    /**
+     * Muxes [video] and [audio] into [output]. [container] decides whether the
+     * streaming hint is needed: `+faststart` is only valid for MP4-family files.
+     */
+    suspend fun merge(context: Context, video: File, audio: File, output: File, container: String) {
+        val args = mutableListOf(
+            "-y",
+            "-i", video.absolutePath,
+            "-i", audio.absolutePath,
+            "-map", "0:v:0",
+            "-map", "1:a:0",
+            "-c", "copy",
         )
+        if (container.lowercase() in MP4_CONTAINERS) {
+            args += listOf("-movflags", "+faststart")
+        }
+        args += output.absolutePath
+        run(context, args)
     }
 
+    /**
+     * Converts the audio track of [source] to [format].
+     *
+     * [bitrate] is in kbps and ignored for lossless targets. When the source
+     * already is the requested format and [copyWhenPossible] is set no
+     * re-encoding happens, which keeps e.g. AAC 256 kbps untouched.
+     */
     suspend fun convertAudio(
         context: Context,
         source: File,
         output: File,
         format: String,
         codec: String?,
+        bitrate: Int = 0,
+        copyWhenPossible: Boolean = true,
     ) {
+        val target = format.lowercase()
         val args = mutableListOf("-y", "-i", source.absolutePath, "-vn")
-        when (format.lowercase()) {
-            "mp3" -> args += listOf("-c:a", "libmp3lame", "-b:a", "320k")
-            "m4a" -> if (codec?.startsWith("mp4a") == true) {
+        when (target) {
+            "mp3" -> args += listOf("-c:a", "libmp3lame") + bitrateArg(bitrate, 320)
+            "m4a" -> if (copyWhenPossible && codec?.startsWith("mp4a") == true) {
                 args += listOf("-c:a", "copy")
             } else {
-                args += listOf("-c:a", "aac", "-b:a", "256k")
+                args += listOf("-c:a", "aac") + bitrateArg(bitrate, 256)
             }
+            "flac" -> args += listOf("-c:a", "flac")
+            "wav" -> args += listOf("-c:a", "pcm_s16le")
             else -> throw ParallelUnavailable("Unsupported audio format: $format")
         }
         args += output.absolutePath
         run(context, args)
     }
+
+    private fun bitrateArg(bitrate: Int, fallback: Int): List<String> =
+        listOf("-b:a", "${if (bitrate > 0) bitrate else fallback}k")
 
     private suspend fun run(context: Context, args: List<String>) {
         val nativeDir = context.applicationInfo.nativeLibraryDir
@@ -115,6 +134,9 @@ object FfmpegRunner {
 
 /** Where youtubedl-android unpacks the shared `libav*` libraries. */
 internal const val FFMPEG_LIB_DIR = "youtubedl-android/packages/ffmpeg/usr/lib"
+
+/** Containers that accept the MP4 streaming hint. */
+internal val MP4_CONTAINERS = setOf("mp4", "m4v", "mov")
 
 /**
  * `LD_LIBRARY_PATH` for the bundled ffmpeg.

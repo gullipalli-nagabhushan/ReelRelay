@@ -9,6 +9,19 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- Desktop-parity format catalogue in the Android app. The picker now shows up to
+  three codec families per height (H.264, H.265, AV1, VP9) with fps, HDR and
+  Portrait badges, estimated file sizes, a starred 1080p H.264 suggestion and
+  the five desktop audio profiles (MP3 320, MP3 192, M4A 256, FLAC, WAV).
+  Two-line rows replace the plain label list.
+- Cookie import in the Android app: pick a browser-exported `cookies.txt` and it
+  is copied into private storage and passed to yt-dlp, which unlocks
+  login-only Instagram Reels and Facebook videos.
+- Platform `Origin`, `Referer`, `Accept-Language` and `Cookie` headers are sent
+  for direct Instagram/Facebook CDN downloads, matching the desktop app.
+- Human-readable Android errors for private posts, login requirements, rate
+  limits, age restrictions, region locks, deleted posts and live streams instead
+  of raw yt-dlp output.
 - Parallel-range download accelerator. High-resolution streams that ffmpeg
   must mux are fetched over up to 12 HTTP `Range` connections into a bounded
   in-memory window and exposed to ffmpeg through a localhost URL. On a 4K AV1
@@ -50,6 +63,10 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Fixed
 
+- Instagram and Facebook downloads on Android: progressive files are now
+  downloadable when a link has no separate audio stream, the audio profiles are
+  extracted from the video track, and the CDN gets the `Referer`/`Origin`
+  headers it requires.
 - Android downloads no longer fail with `HTTP Error 403: Forbidden` on
   high-resolution YouTube formats. The app now overrides youtubedl-android's
   stale yt-dlp (2025.11.12) with the current release (2026.10.26), and replaces

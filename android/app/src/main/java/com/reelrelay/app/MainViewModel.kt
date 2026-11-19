@@ -1,9 +1,11 @@
 package com.reelrelay.app
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.yausername.youtubedl_android.YoutubeDL
+import com.yausername.youtubedl_android.YoutubeDLRequest
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -28,13 +30,16 @@ data class MainUiState(
     val status: String = "",
     val error: String? = null,
     val savedName: String? = null,
+    val cookiesLoaded: Boolean = false,
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val app = application as ReelRelayApp
     private val repository = DownloadRepository(application)
-    private val _state = MutableStateFlow(MainUiState())
+    private val _state = MutableStateFlow(
+        MainUiState(cookiesLoaded = CookieStore.hasCookies(application)),
+    )
     val state: StateFlow<MainUiState> = _state.asStateFlow()
 
     private var downloadJob: Job? = null
@@ -46,7 +51,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _state.update {
                 it.copy(
                     engineReady = result.isSuccess,
-                    engineError = result.exceptionOrNull()?.let(::readable),
+                    engineError = result.exceptionOrNull()?.let { error ->
+                        friendlyError(error.message, CookieStore.hasCookies(app))
+                    },
                 )
             }
         }
@@ -71,7 +78,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             try {
                 app.awaitEngine().getOrThrow()
-                val info = withContext(Dispatchers.IO) { YoutubeDL.getInstance().getInfo(url) }
+                val cookies = cookiesPath()
+                val info = withContext(Dispatchers.IO) {
+                    if (cookies == null) {
+                        YoutubeDL.getInstance().getInfo(url)
+                    } else {
+                        val request = YoutubeDLRequest(url).apply {
+                            addOption("--cookies", cookies)
+                        }
+                        YoutubeDL.getInstance().getInfo(request)
+                    }
+                }
                 val summary = buildSummary(info)
                 _state.update {
                     it.copy(
@@ -87,13 +104,57 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
             } catch (t: Throwable) {
-                _state.update { it.copy(loadingInfo = false, error = readable(t)) }
+                _state.update {
+                    it.copy(
+                        loadingInfo = false,
+                        error = friendlyError(t.message, CookieStore.hasCookies(app))
+                            ?: "The link could not be read.",
+                    )
+                }
             }
         }
     }
 
     fun select(index: Int) {
         _state.update { it.copy(selectedIndex = index) }
+    }
+
+    fun importCookies(uri: Uri) {
+        viewModelScope.launch {
+            val count = withContext(Dispatchers.IO) {
+                runCatching { CookieStore.import(app, uri) }.getOrNull()
+            }
+            if (count == null) {
+                _state.update {
+                    it.copy(
+                        error = "That file is not a Netscape cookies.txt. Export cookies from a " +
+                            "logged-in browser (for example with the \"Get cookies.txt\" extension).",
+                    )
+                }
+            } else {
+                _state.update {
+                    it.copy(
+                        cookiesLoaded = true,
+                        error = null,
+                        status = "Cookies imported — $count entries. Instagram and Facebook links " +
+                            "can now use your session.",
+                    )
+                }
+            }
+        }
+    }
+
+    fun clearCookies() {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { CookieStore.clear(app) }
+            _state.update {
+                it.copy(cookiesLoaded = false, status = "Cookies removed.", error = null)
+            }
+        }
+    }
+
+    fun dismissMessage() {
+        _state.update { it.copy(error = null, status = "") }
     }
 
     fun startDownload() {
@@ -118,8 +179,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             var produced: File? = null
             try {
+                val cookies = cookiesPath()
                 val file = withContext(Dispatchers.IO) {
-                    repository.download(url, info.title, choice, processId) { progress, eta, line ->
+                    repository.download(url, info.title, choice, processId, cookies) { progress, eta, line ->
                         _state.update {
                             it.copy(
                                 progress = progress.coerceIn(0f, 100f).toInt(),
@@ -151,7 +213,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val message = if (t is YoutubeDL.CanceledException) {
                     "Download cancelled."
                 } else {
-                    readable(t)
+                    friendlyError(t.message, CookieStore.hasCookies(app))
+                        ?: "The download failed."
                 }
                 _state.update {
                     it.copy(downloading = false, indeterminate = false, status = "", error = message)
@@ -176,6 +239,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun cookiesPath(): String? =
+        if (CookieStore.hasCookies(app)) CookieStore.file(app).absolutePath else null
+
     private fun progressLine(progress: Float, eta: Long, line: String): String {
         val percent = progress.coerceIn(0f, 100f).toInt()
         val etaText = when {
@@ -189,13 +255,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             detail.ifBlank { "Contacting the source…" }
         }
-    }
-
-    private fun readable(t: Throwable): String {
-        val message = t.message?.trim().orEmpty()
-        if (message.isBlank()) return t.javaClass.simpleName
-        val last = message.lineSequence().lastOrNull { it.isNotBlank() } ?: message
-        return last.take(300)
     }
 
     private fun string(id: Int): String = getApplication<Application>().getString(id)

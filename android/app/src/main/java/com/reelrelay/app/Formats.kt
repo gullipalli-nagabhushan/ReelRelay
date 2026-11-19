@@ -15,15 +15,26 @@ data class DownloadSource(
     val codec: String?,
 )
 
-/** One row in the format picker. */
+/**
+ * One row in the format picker.
+ *
+ * [label] is the bold first line ("1080p · H.264 · MP4") and [detail] is the
+ * quieter second line ("Full HD · 60 fps · ~45 MB"). [mergeTo] is the container
+ * ffmpeg should produce when a separate video and audio stream are muxed.
+ */
 data class FormatChoice(
     val label: String,
+    val detail: String = "",
     val formatSelector: String,
-    val mergeToMp4: Boolean = false,
+    val mergeTo: String? = null,
     val extractAudioFormat: String? = null,
+    val extractAudioBitrate: Int = 0,
     val video: DownloadSource? = null,
     val audio: DownloadSource? = null,
-)
+    val recommended: Boolean = false,
+) {
+    fun selectionLabel(): String = if (recommended) "★ $label" else label
+}
 
 /** Everything the preview card needs, already flattened for the UI. */
 data class MediaSummary(
@@ -44,6 +55,24 @@ data class PreviewSource(
 )
 
 private val PLAYABLE_EXTENSIONS = setOf("mp4", "m4v", "webm", "mov")
+private val DEFAULT_USER_AGENT =
+    "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 " +
+        "(KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
+
+private val PLATFORM_ORIGINS = mapOf(
+    "youtube" to "https://www.youtube.com/",
+    "instagram" to "https://www.instagram.com/",
+    "facebook" to "https://www.facebook.com/",
+)
+
+private data class Family(val label: String, val container: String)
+
+private val FAMILIES = linkedMapOf(
+    "h264" to Family("H.264", "mp4"),
+    "h265" to Family("H.265", "mp4"),
+    "av1" to Family("AV1", "mp4"),
+    "vp9" to Family("VP9", "webm"),
+)
 
 private fun isMissing(codec: String?): Boolean = codec.isNullOrBlank() || codec == "none"
 
@@ -53,15 +82,22 @@ private fun displayHeight(format: VideoFormat): Int {
     return if (width > 0 && height > 0) min(width, height) else height
 }
 
+private fun isVertical(format: VideoFormat): Boolean =
+    format.width > 0 && format.height > 0 && format.height > format.width
+
+private fun bitrate(format: VideoFormat): Long =
+    when {
+        format.tbr > 0 -> format.tbr.toLong()
+        format.abr > 0 -> format.abr.toLong()
+        format.asr > 0 -> format.asr.toLong()
+        else -> 0L
+    }
+
 private fun estimatedBytes(format: VideoFormat, durationSeconds: Int): Long {
     if (format.fileSize > 0) return format.fileSize
     if (format.fileSizeApproximate > 0) return format.fileSizeApproximate
-    val bitrate = when {
-        format.tbr > 0 -> format.tbr.toLong()
-        format.abr > 0 -> format.abr.toLong()
-        else -> 0L
-    }
-    return if (bitrate > 0 && durationSeconds > 0) bitrate * 1000 / 8 * durationSeconds else 0L
+    val rate = bitrate(format)
+    return if (rate > 0 && durationSeconds > 0) rate * 1000 / 8 * durationSeconds else 0L
 }
 
 private fun humanSize(bytes: Long): String {
@@ -92,28 +128,99 @@ private fun durationLabel(seconds: Int): String {
     }
 }
 
-private fun bestVideoAtHeight(formats: List<VideoFormat>): VideoFormat? {
-    return formats.sortedWith(
-        compareByDescending<VideoFormat> { it.ext == "mp4" }
-            .thenByDescending { it.vcodec?.startsWith("avc") == true }
-            .thenByDescending { it.tbr }
-    ).firstOrNull()
+private fun qualityName(height: Int): String = when (height) {
+    4320 -> "8K"
+    2160 -> "4K"
+    1440 -> "2K"
+    1080 -> "Full HD"
+    720 -> "HD"
+    480 -> "SD"
+    360 -> "SD"
+    240 -> "Low"
+    144 -> "Low"
+    else -> "${height}p"
 }
 
-private fun bestAudio(formats: List<VideoFormat>): VideoFormat? {
-    return formats
-        .filter {
-            isMissing(it.vcodec) && !isMissing(it.acodec) && (it.abr > 0 || it.tbr > 0) &&
-                !it.url.isNullOrBlank()
-        }
-        .maxByOrNull { if (it.abr > 0) it.abr else it.tbr }
+private fun codecFamily(codec: String?): String {
+    val value = codec?.lowercase(Locale.US).orEmpty()
+    return when {
+        value.startsWith("avc") || value.startsWith("h264") -> "h264"
+        value.startsWith("hev") || value.startsWith("hvc") || value.startsWith("h265") -> "h265"
+        value.startsWith("av01") || value.startsWith("av1") -> "av1"
+        value.startsWith("vp9") || value.startsWith("vp09") || value.startsWith("vp8") -> "vp9"
+        else -> "other"
+    }
 }
 
-private fun bestProgressive(formats: List<VideoFormat>): VideoFormat? {
-    // Smallest watchable progressive stream keeps data use and start-up low.
+private fun isAudioOnly(format: VideoFormat): Boolean =
+    isMissing(format.vcodec) && !isMissing(format.acodec) &&
+        bitrate(format) > 0 && !format.url.isNullOrBlank()
+
+private fun isProgressive(format: VideoFormat): Boolean =
+    !isMissing(format.vcodec) && !isMissing(format.acodec) && displayHeight(format) > 0
+
+private fun isUsable(format: VideoFormat): Boolean {
+    val note = format.formatNote?.lowercase(Locale.US).orEmpty()
+    if (note.contains("storyboard") || note.contains("drm")) return false
+    return !format.url.isNullOrBlank() || !format.manifestUrl.isNullOrBlank()
+}
+
+private fun isHdr(format: VideoFormat): Boolean {
+    val text = listOfNotNull(format.formatNote, format.format)
+        .joinToString(" ")
+        .lowercase(Locale.US)
+    return text.contains("hdr") || text.contains("hlg") || text.contains("pq")
+}
+
+private fun fpsOf(format: VideoFormat): Int = format.fps
+
+private fun audioCodecName(format: VideoFormat): String {
+    val codec = format.acodec?.lowercase(Locale.US).orEmpty()
+    return when {
+        codec.startsWith("mp4a") || codec.startsWith("aac") -> "AAC"
+        codec.startsWith("opus") -> "Opus"
+        codec.startsWith("vorbis") -> "Vorbis"
+        codec.startsWith("mp3") -> "MP3"
+        codec.startsWith("flac") -> "FLAC"
+        else -> "audio"
+    }
+}
+
+private class CandidateRank(val direct: Int, val container: Int, val bitrate: Long) :
+    Comparable<CandidateRank> {
+    override fun compareTo(other: CandidateRank): Int =
+        compareValuesBy(this, other, { it.direct }, { it.container }, { it.bitrate })
+}
+
+private fun candidateRank(format: VideoFormat, family: String): CandidateRank {
+    val direct = if (isDirect(format)) 0 else 1
+    val ext = format.ext.orEmpty()
+    val wanted = FAMILIES[family]?.container
+    val container = if (wanted != null && ext == wanted) 0 else 1
+    return CandidateRank(direct, container, -bitrate(format))
+}
+
+private fun isDirect(format: VideoFormat): Boolean =
+    !format.url.isNullOrBlank() && !isManifestUrl(format.url.orEmpty()) &&
+        format.manifestUrl.isNullOrBlank()
+
+private fun bestAudioOnly(formats: List<VideoFormat>): VideoFormat? =
+    formats.filter(::isAudioOnly).maxByOrNull { bitrate(it) }
+
+private fun bestAudioFor(formats: List<VideoFormat>, container: String): VideoFormat? {
+    val candidates = formats.filter(::isAudioOnly)
+    if (candidates.isEmpty()) return null
+    val preferredExt = if (container == "mp4") "m4a" else "webm"
+    val preferred = candidates.filter { it.ext == preferredExt }
+    return (preferred.ifEmpty { candidates }).maxByOrNull { bitrate(it) }
+}
+
+private fun bestProgressive(format: List<VideoFormat>): VideoFormat? =
+    format.filter(::isProgressive).maxByOrNull { displayHeight(it) * 1_000_000L + bitrate(it) }
+
+private fun bestProgressiveWatchable(formats: List<VideoFormat>): VideoFormat? {
     val candidates = formats.filter {
-        !isMissing(it.vcodec) && !isMissing(it.acodec) &&
-            it.height > 0 && !it.url.isNullOrBlank() &&
+        isProgressive(it) && !it.url.isNullOrBlank() &&
             (it.ext ?: "mp4") in PLAYABLE_EXTENSIONS
     }
     if (candidates.isEmpty()) return null
@@ -123,16 +230,39 @@ private fun bestProgressive(formats: List<VideoFormat>): VideoFormat? {
     return sorted.firstOrNull { displayHeight(it) >= 360 } ?: sorted.last()
 }
 
-private fun previewHeaders(format: VideoFormat, info: VideoInfo): Map<String, String> {
+/** Platform-specific headers, mirroring what the desktop app sends. */
+internal fun streamHeaders(format: VideoFormat, info: VideoInfo): Map<String, String> {
+    val source = LinkedHashMap<String, String>()
+    info.httpHeaders?.forEach { (key, value) -> source[key.lowercase(Locale.US)] = value }
+    format.httpHeaders?.forEach { (key, value) -> source[key.lowercase(Locale.US)] = value }
+
+    val platform = platformOf(info)
+    val origin = PLATFORM_ORIGINS[platform]
     val merged = LinkedHashMap<String, String>()
-    info.httpHeaders?.forEach { (key, value) -> merged[key] = value }
-    format.httpHeaders?.forEach { (key, value) -> merged[key] = value }
-    merged.putIfAbsent(
-        "User-Agent",
-        "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 " +
-            "(KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
-    )
+    merged["User-Agent"] = source["user-agent"] ?: DEFAULT_USER_AGENT
+    if (origin != null) {
+        merged["Referer"] = source["referer"] ?: origin
+        merged["Origin"] = origin.trimEnd('/')
+    }
+    merged["Accept-Language"] = source["accept-language"] ?: "en-US,en;q=0.9"
+    source["cookie"]?.let { merged["Cookie"] = it }
+    source.forEach { (key, value) ->
+        if (merged.keys.none { it.equals(key, ignoreCase = true) }) {
+            merged[key] = value
+        }
+    }
     return merged
+}
+
+private fun platformOf(info: VideoInfo): String? {
+    val extractor = info.extractorKey ?: info.extractor
+    val haystack = listOfNotNull(extractor, info.webpageUrl).joinToString(" ").lowercase(Locale.US)
+    return when {
+        haystack.contains("instagram") -> "instagram"
+        haystack.contains("facebook") || haystack.contains("fb.watch") -> "facebook"
+        haystack.contains("youtube") || haystack.contains("youtu.be") -> "youtube"
+        else -> null
+    }
 }
 
 /**
@@ -152,7 +282,7 @@ private fun downloadSource(
         ?: format.vcodec?.takeIf { !isMissing(it) }
     return DownloadSource(
         url = url,
-        headers = previewHeaders(format, info),
+        headers = streamHeaders(format, info),
         formatId = format.formatId.orEmpty(),
         ext = format.ext ?: "mp4",
         size = estimatedBytes(format, duration),
@@ -165,99 +295,40 @@ private fun isManifestUrl(url: String): Boolean {
     return path.endsWith(".m3u8") || path.endsWith(".mpd") || path.endsWith(".ism")
 }
 
+private fun detailLine(vararg parts: String?): String =
+    parts.filter { !it.isNullOrBlank() }.joinToString(" · ")
+
+private fun sizeLabel(bytes: Long): String? =
+    humanSize(bytes).takeIf { it.isNotEmpty() }?.let { "~$it" }
+
 /** Turn a raw yt-dlp payload into the small model the UI renders. */
 fun buildSummary(info: VideoInfo): MediaSummary {
     val formats = info.formats.orEmpty().toList()
     val duration = info.duration
-    val playableVideo = formats.filter { !isMissing(it.vcodec) && it.height > 0 && !it.url.isNullOrBlank() }
-    val audio = bestAudio(formats)
 
-    val videoChoices = mutableListOf<FormatChoice>()
-    val heights = playableVideo.map(::displayHeight).filter { it > 0 }.distinct().sortedDescending()
-    for (height in heights) {
-        val group = playableVideo.filter { displayHeight(it) == height }
-        val progressive = group
-            .filter { !isMissing(it.acodec) }
-            .sortedWith(compareByDescending<VideoFormat> { it.ext == "mp4" }.thenByDescending { it.tbr })
-            .firstOrNull()
-        val videoOnly = group.filter { isMissing(it.acodec) }
-        val video = bestVideoAtHeight(videoOnly) ?: progressive
-        if (video == null) continue
-
-        val selector: String
-        val merge: Boolean
-        val bytes: Long
-        if (!isMissing(video.acodec)) {
-            // Progressive file: audio already inside the video.
-            val id = video.formatId ?: continue
-            selector = id
-            merge = false
-            bytes = estimatedBytes(video, duration)
-        } else if (audio != null) {
-            val videoId = video.formatId ?: continue
-            val audioId = audio.formatId ?: continue
-            selector = "$videoId+$audioId"
-            merge = true
-            bytes = estimatedBytes(video, duration) + estimatedBytes(audio, duration)
-        } else {
-            // Video-only stream with no audio source: not a useful download.
-            continue
-        }
-
-        val extension = if (merge) "mp4" else (video.ext ?: "mp4")
-        val size = humanSize(bytes)
-        val label = buildString {
-            append("Video · ${height}p · ${extension.uppercase()}")
-            if (size.isNotEmpty()) append(" · ~$size")
-        }
-        val videoSource = downloadSource(video, info, duration)
-        val audioSource = audio?.let { downloadSource(it, info, duration) }
-        videoChoices.add(
-            FormatChoice(
-                label = label,
-                formatSelector = selector,
-                mergeToMp4 = merge,
-                video = videoSource,
-                audio = if (merge) audioSource else null,
-            )
-        )
+    val usableVideo = formats.filter {
+        isUsable(it) && !isMissing(it.vcodec) && displayHeight(it) > 0
     }
-
-    val audioChoices = buildList {
-        val audioSource = audio?.let { downloadSource(it, info, duration) }
-        if (audio != null) {
-            add(
-                FormatChoice(
-                    "Audio · original stream (${(audio.ext ?: "m4a").uppercase()})",
-                    "bestaudio/best",
-                    audio = audioSource,
-                )
-            )
-        }
-        add(
-            FormatChoice(
-                "Audio · MP3 320 kbps",
-                "bestaudio/best",
-                extractAudioFormat = "mp3",
-                audio = audioSource,
-            )
-        )
-        add(
-            FormatChoice(
-                "Audio · M4A 256 kbps",
-                "bestaudio/best",
-                extractAudioFormat = "m4a",
-                audio = audioSource,
-            )
-        )
-    }
-
+    val audioOnly = bestAudioOnly(formats)
     val progressive = bestProgressive(formats)
-    val preview = progressive?.let {
+
+    val videoChoices = buildVideoChoices(info, formats, usableVideo, duration)
+    val audioChoices = buildAudioChoices(info, formats, audioOnly, progressive, duration)
+
+    val recommendedIndex = videoChoices.indexOfFirst { it.recommended }
+    val orderedVideo = if (recommendedIndex > 0) {
+        listOf(videoChoices[recommendedIndex]) +
+            videoChoices.filterIndexed { index, _ -> index != recommendedIndex }
+    } else {
+        videoChoices
+    }
+
+    val previewFormat = bestProgressiveWatchable(formats)
+    val preview = previewFormat?.let {
         PreviewSource(
             url = it.url!!,
-            headers = previewHeaders(it, info),
-            label = "${displayHeight(it)}p ${(it.ext ?: "mp4").uppercase()}",
+            headers = streamHeaders(it, info),
+            label = "${displayHeight(it)}p ${(it.ext ?: "mp4").uppercase(Locale.US)}",
         )
     }
 
@@ -266,7 +337,7 @@ fun buildSummary(info: VideoInfo): MediaSummary {
         if (durationText.isNotEmpty()) add(durationText)
         val platform = info.extractor?.replaceFirstChar { char -> char.uppercase() }
         if (!platform.isNullOrBlank()) add(platform)
-        playableVideo.maxOfOrNull(::displayHeight)?.let { add("up to ${it}p") }
+        usableVideo.map(::displayHeight).maxOrNull()?.let { add("up to ${it}p") }
     }
 
     return MediaSummary(
@@ -276,6 +347,174 @@ fun buildSummary(info: VideoInfo): MediaSummary {
         thumbnail = info.thumbnail ?: info.thumbnails?.lastOrNull()?.url,
         webpageUrl = info.webpageUrl ?: "",
         preview = preview,
-        choices = videoChoices + audioChoices,
+        choices = orderedVideo + audioChoices,
     )
+}
+
+private fun buildVideoChoices(
+    info: VideoInfo,
+    formats: List<VideoFormat>,
+    usableVideo: List<VideoFormat>,
+    duration: Int,
+): List<FormatChoice> {
+    val choices = mutableListOf<FormatChoice>()
+    val heights = usableVideo.map(::displayHeight).filter { it > 0 }.distinct().sortedDescending()
+
+    for (height in heights) {
+        val group = usableVideo.filter { displayHeight(it) == height }
+        val vertical = group.any(::isVertical)
+
+        val byFamily = LinkedHashMap<String, VideoFormat>()
+        for (format in group) {
+            if (!isMissing(format.acodec)) continue
+            val family = codecFamily(format.vcodec)
+            if (family !in FAMILIES) continue
+            val current = byFamily[family]
+            if (current == null ||
+                candidateRank(format, family) < candidateRank(current, family)
+            ) {
+                byFamily[family] = format
+            }
+        }
+
+        var madeForHeight = 0
+        for ((family, meta) in FAMILIES) {
+            if (madeForHeight >= 3) break
+            val video = byFamily[family] ?: continue
+            val container = if (family == "vp9" && video.ext != "webm") "mp4" else meta.container
+            val audio = bestAudioFor(formats, container) ?: continue
+            val videoId = video.formatId ?: continue
+            val audioId = audio.formatId ?: continue
+
+            val fps = fpsOf(video)
+            val hdr = isHdr(video)
+            val totalBytes = estimatedBytes(video, duration) + estimatedBytes(audio, duration)
+            val detail = detailLine(
+                qualityName(height),
+                if (fps >= 50) "$fps fps" else null,
+                if (hdr) "HDR" else null,
+                if (vertical) "Portrait" else null,
+                sizeLabel(totalBytes),
+            )
+            choices += FormatChoice(
+                label = "${height}p · ${meta.label} · ${container.uppercase(Locale.US)}",
+                detail = detailLine(detail, "${meta.label} video + ${audioCodecName(audio)} audio"),
+                formatSelector = "$videoId+$audioId",
+                mergeTo = container,
+                video = downloadSource(video, info, duration),
+                audio = downloadSource(audio, info, duration),
+            )
+            madeForHeight++
+        }
+
+        if (madeForHeight > 0) continue
+
+        // Instagram and Facebook usually expose one progressive file with audio.
+        val prog = group.filter(::isProgressive)
+            .maxByOrNull { bitrate(it) }
+            ?: continue
+        val id = prog.formatId ?: continue
+        val ext = prog.ext ?: "mp4"
+        val family = codecFamily(prog.vcodec)
+        val codecLabel = FAMILIES[family]?.label ?: "Video"
+        val fps = fpsOf(prog)
+        val bytes = estimatedBytes(prog, duration)
+        choices += FormatChoice(
+            label = "${height}p · $codecLabel · ${ext.uppercase(Locale.US)}",
+            detail = detailLine(
+                qualityName(height),
+                if (fps >= 50) "$fps fps" else null,
+                if (isHdr(prog)) "HDR" else null,
+                if (vertical) "Portrait" else null,
+                sizeLabel(bytes),
+                "Single file with audio",
+            ),
+            formatSelector = id,
+            video = downloadSource(prog, info, duration),
+        )
+    }
+
+    if (choices.isEmpty()) return choices
+
+    // Prefer 1080p H.264/MP4, the broadest-compatibility option. Sites that
+    // only expose progressive files (Instagram, Facebook) keep their highest
+    // quality row as the suggestion.
+    val best = choices.firstOrNull { it.label.startsWith("1080p") && it.mergeTo == "mp4" }
+        ?: choices.firstOrNull { it.mergeTo == "mp4" }
+        ?: choices.first()
+
+    return choices.map { choice ->
+        if (choice === best) choice.copy(recommended = true) else choice
+    }
+}
+
+private data class AudioProfile(
+    val label: String,
+    val ext: String,
+    val bitrate: Int,
+    val lossless: Boolean = false,
+)
+
+private val AUDIO_PROFILES = listOf(
+    AudioProfile("MP3 · 320 kbps", "mp3", 320),
+    AudioProfile("MP3 · 192 kbps", "mp3", 192),
+    AudioProfile("M4A · AAC 256 kbps", "m4a", 256),
+    AudioProfile("FLAC · Lossless", "flac", 0, lossless = true),
+    AudioProfile("WAV · PCM 16-bit", "wav", 1411, lossless = true),
+)
+
+private fun buildAudioChoices(
+    info: VideoInfo,
+    formats: List<VideoFormat>,
+    audioOnly: VideoFormat?,
+    progressive: VideoFormat?,
+    duration: Int,
+): List<FormatChoice> {
+    // Instagram/Facebook often have no audio-only stream, so conversion takes
+    // the audio track out of the progressive video instead.
+    val source = audioOnly ?: progressive ?: return emptyList()
+    val fromVideo = audioOnly == null
+    val sourceDownload = downloadSource(source, info, duration)
+    val sourceExt = source.ext ?: if (fromVideo) "mp4" else "m4a"
+    val sourceSelector = source.formatId ?: if (fromVideo) "best" else "bestaudio"
+
+    val choices = mutableListOf<FormatChoice>()
+
+    if (!fromVideo) {
+        val kbps = bitrate(source)
+        choices += FormatChoice(
+            label = "Original audio · ${sourceExt.uppercase(Locale.US)}",
+            detail = detailLine(
+                if (kbps > 0) "$kbps kbps" else null,
+                sizeLabel(estimatedBytes(source, duration)),
+                "No re-encoding",
+            ),
+            formatSelector = sourceSelector,
+            audio = sourceDownload,
+        )
+    }
+
+    for (profile in AUDIO_PROFILES) {
+        val estimated = when {
+            profile.ext == "wav" && duration > 0 -> duration.toLong() * 44100 * 2 * 2
+            profile.lossless && duration > 0 -> duration.toLong() * 200_000
+            profile.bitrate > 0 && duration > 0 -> duration.toLong() * profile.bitrate * 1000 / 8
+            else -> 0L
+        }
+        choices += FormatChoice(
+            label = profile.label,
+            detail = detailLine(
+                sizeLabel(estimated),
+                if (fromVideo) "Extracted from the video" else "Converted on the phone",
+            ),
+            formatSelector = sourceSelector,
+            extractAudioFormat = profile.ext,
+            // Lossless targets ignore a bitrate; keep it zero so yt-dlp does
+            // not receive a meaningless "-audio-quality".
+            extractAudioBitrate = if (profile.lossless) 0 else profile.bitrate,
+            audio = sourceDownload,
+        )
+    }
+
+    return choices
 }

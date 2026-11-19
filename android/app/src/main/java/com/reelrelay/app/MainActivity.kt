@@ -5,9 +5,13 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.ArrayAdapter
+import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
@@ -35,7 +39,7 @@ class MainActivity : AppCompatActivity() {
     private var player: ExoPlayer? = null
     private var pendingDownload = false
     private var lastPreview: PreviewSource? = null
-    private var lastLabels: List<String> = emptyList()
+    private var lastChoices: List<FormatChoice> = emptyList()
     private var lastError: String? = null
 
     private val storagePermission =
@@ -49,6 +53,11 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+    private val openCookies =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) viewModel.importCookies(uri)
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
@@ -57,6 +66,10 @@ class MainActivity : AppCompatActivity() {
         binding.previewButton.setOnClickListener { submit() }
         binding.downloadButton.setOnClickListener { onDownloadClicked() }
         binding.cancelButton.setOnClickListener { viewModel.cancelDownload() }
+        binding.cookiesButton.setOnClickListener {
+            openCookies.launch(arrayOf("text/plain", "text/*", "application/octet-stream", "*/*"))
+        }
+        binding.cookiesClearButton.setOnClickListener { viewModel.clearCookies() }
         binding.urlInput.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_GO || actionId == EditorInfo.IME_ACTION_DONE) {
                 submit()
@@ -130,6 +143,12 @@ class MainActivity : AppCompatActivity() {
             )
         )
 
+        binding.cookiesStatus.text = getString(
+            if (state.cookiesLoaded) R.string.cookies_loaded else R.string.cookies_missing,
+        )
+        binding.cookiesClearButton.isVisible = state.cookiesLoaded
+        binding.cookiesButton.isEnabled = !state.downloading
+
         val info = state.info
         binding.mediaCard.isVisible = info != null
         if (info != null) {
@@ -172,18 +191,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateChoices(choices: List<FormatChoice>, selected: Int) {
-        val labels = choices.map { it.label }
-        if (labels != lastLabels) {
-            lastLabels = labels
-            binding.formatInput.setAdapter(
-                ArrayAdapter(this, android.R.layout.simple_list_item_1, labels)
-            )
+        if (choices !== lastChoices) {
+            lastChoices = choices
+            binding.formatInput.setAdapter(FormatAdapter(this, choices))
         }
-        if (selected in labels.indices) {
-            val text = labels[selected]
-            if (binding.formatInput.text?.toString() != text) {
-                binding.formatInput.setText(text, false)
-            }
+        val choice = choices.getOrNull(selected) ?: return
+        if (binding.formatInput.text?.toString() != choice.displayTitle()) {
+            binding.formatInput.setText(choice.displayTitle(), false)
         }
     }
 
@@ -249,4 +263,29 @@ class MainActivity : AppCompatActivity() {
         releasePlayer()
         super.onDestroy()
     }
+
+    /** Two-line dropdown: bold "1080p · H.264 · MP4", muted details below. */
+    private class FormatAdapter(context: android.content.Context, items: List<FormatChoice>) :
+        ArrayAdapter<FormatChoice>(context, R.layout.item_format, items) {
+
+        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View =
+            row(position, convertView, parent)
+
+        override fun getDropDownView(position: Int, convertView: View?, parent: ViewGroup): View =
+            row(position, convertView, parent)
+
+        private fun row(position: Int, convertView: View?, parent: ViewGroup): View {
+            val view = convertView ?: LayoutInflater.from(parent.context)
+                .inflate(R.layout.item_format, parent, false)
+            val choice = getItem(position) ?: return view
+            view.findViewById<TextView>(R.id.formatTitle).text = choice.displayTitle()
+            val detail = view.findViewById<TextView>(R.id.formatDetail)
+            detail.text = choice.detail
+            detail.isVisible = choice.detail.isNotBlank()
+            return view
+        }
+    }
 }
+
+/** Title line, with a star for the suggested row. */
+internal fun FormatChoice.displayTitle(): String = if (recommended) "★ $label" else label

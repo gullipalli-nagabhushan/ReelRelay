@@ -449,7 +449,17 @@ extraction, merging and audio conversion all run on the phone.
 - Paste a link or share one from the YouTube, Instagram or Facebook app.
 - The app shows the thumbnail, title, duration and an inline ExoPlayer preview
   of the smallest progressive stream.
-- Pick any video height or an audio format, then download.
+- The format picker mirrors the desktop catalogue: the same heights, up to three
+  codec families per height (H.264, H.265, AV1, VP9), fps/HDR/Portrait badges,
+  estimated sizes, a starred suggestion, and the five audio profiles (MP3 320,
+  MP3 192, M4A 256, FLAC, WAV). Instagram/Facebook, which usually expose a
+  single progressive file, get their audio extracted from that file.
+- Instagram and Facebook frequently require a logged-in session for private
+  Reels and Videos. Import a `cookies.txt` exported from a logged-in browser
+  (for example with the *Get cookies.txt* extension); the app keeps it in
+  private storage and passes it to yt-dlp for both extraction and download.
+  Failures caused by login requirements, rate limits or region locks are
+  explained in plain language instead of a raw yt-dlp traceback.
 - High-resolution tracks are fetched over 12 parallel `Range` connections, the
   same trick the desktop app uses, then remuxed on the phone by the bundled
   ffmpeg. If a stream cannot be split, yt-dlp handles it automatically.

@@ -24,13 +24,14 @@ object ParallelDownload {
         val video = choice.video
         val audio = choice.audio
         if (video == null && audio == null) return null
-        if (choice.mergeToMp4 && (video == null || audio == null)) return null
+        if (choice.mergeTo != null && (video == null || audio == null)) return null
 
         val base = sanitizeFileName(title)
         val downloader = SegmentDownloader()
 
-        // Audio-only source: either keep the original stream or convert it.
+        // Audio-only (or audio-from-progressive-video) source.
         if (video == null && audio != null) {
+            val sourceLabel = if (choice.extractAudioFormat != null) "video" else "audio"
             if (choice.extractAudioFormat == null) {
                 val target = File(workDir, "$base.${audio.extensionOr("m4a")}")
                 downloadStream(downloader, audio, target, onProgress, "audio", 0f, 99f)
@@ -39,11 +40,18 @@ object ParallelDownload {
             }
 
             val source = File(workDir, "$base.source.${audio.extensionOr("m4a")}")
-            downloadStream(downloader, audio, source, onProgress, "audio", 0f, 88f)
+            downloadStream(downloader, audio, source, onProgress, sourceLabel, 0f, 88f)
             return try {
                 val target = File(workDir, "$base.${choice.extractAudioFormat}")
                 onProgress(90f, 0L, "Converting to ${choice.extractAudioFormat.uppercase(Locale.US)}…")
-                FfmpegRunner.convertAudio(context, source, target, choice.extractAudioFormat, audio.codec)
+                FfmpegRunner.convertAudio(
+                    context = context,
+                    source = source,
+                    output = target,
+                    format = choice.extractAudioFormat,
+                    codec = audio.codec,
+                    bitrate = choice.extractAudioBitrate,
+                )
                 onProgress(100f, 0L, "Saved ${target.name}")
                 target
             } finally {
@@ -74,10 +82,11 @@ object ParallelDownload {
         val audioFile = File(workDir, "$base.audio.${audio.extensionOr("m4a")}")
         downloadStream(downloader, audio, audioFile, onProgress, "audio", 84f, 96f)
 
-        val merged = File(workDir, "$base.mp4")
+        val container = choice.mergeTo ?: "mp4"
+        val merged = File(workDir, "$base.$container")
         return try {
             onProgress(97f, 0L, "Merging video and audio…")
-            FfmpegRunner.merge(context, videoFile, audioFile, merged)
+            FfmpegRunner.merge(context, videoFile, audioFile, merged, container)
             onProgress(100f, 0L, "Saved ${merged.name}")
             merged
         } finally {
