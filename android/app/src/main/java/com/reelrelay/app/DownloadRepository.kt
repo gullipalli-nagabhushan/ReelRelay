@@ -7,9 +7,11 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import android.util.Log
 import androidx.annotation.RequiresApi
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -25,6 +27,7 @@ class DownloadRepository(private val context: Context) {
 
     suspend fun download(
         url: String,
+        title: String,
         choice: FormatChoice,
         processId: String,
         onProgress: (Float, Long, String) -> Unit,
@@ -34,39 +37,67 @@ class DownloadRepository(private val context: Context) {
             throw IllegalStateException("Could not create a temporary download folder.")
         }
         try {
-            val request = YoutubeDLRequest(url)
-            request.addOption("--no-playlist")
-            request.addOption("--no-mtime")
-            request.addOption("--newline")
-            request.addOption("--no-part")
-            request.addOption("-o", File(workDir, "%(title).150B.%(ext)s").absolutePath)
-            request.addOption("-f", choice.formatSelector)
-
-            if (choice.mergeToMp4) {
-                request.addOption("--merge-output-format", "mp4")
+            val accelerated = try {
+                ParallelDownload.download(context, title, choice, workDir, onProgress)
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (t: Throwable) {
+                Log.i(TAG, "Parallel download unavailable, falling back to yt-dlp", t)
+                null
             }
-            choice.extractAudioFormat?.let { format ->
-                request.addOption("--extract-audio")
-                request.addOption("--audio-format", format)
-                request.addOption("--audio-quality", "0")
+            if (accelerated != null && accelerated.isFile && accelerated.length() > 0L) {
+                return@withContext accelerated
             }
-
-            YoutubeDL.getInstance().execute(request, processId) { progress, eta, line ->
-                onProgress(progress, eta, line ?: "")
-            }
-
-            workDir.listFiles()
-                ?.filter {
-                    it.isFile &&
-                        !it.name.endsWith(".part") &&
-                        !it.name.endsWith(".ytdl")
-                }
-                ?.maxByOrNull { it.lastModified() }
-                ?: throw IllegalStateException("The download finished but no file was produced.")
+            accelerated?.delete()
+            workDir.listFiles()?.forEach { it.delete() }
+            runYtDlp(url, choice, workDir, processId, onProgress)
         } catch (t: Throwable) {
             workDir.deleteRecursively()
             throw t
         }
+    }
+
+    /** Original single-connection path, kept as the universal fallback. */
+    private fun runYtDlp(
+        url: String,
+        choice: FormatChoice,
+        workDir: File,
+        processId: String,
+        onProgress: (Float, Long, String) -> Unit,
+    ): File {
+        val request = YoutubeDLRequest(url)
+        request.addOption("--no-playlist")
+        request.addOption("--no-mtime")
+        request.addOption("--newline")
+        request.addOption("--no-part")
+        request.addOption("-o", File(workDir, "%(title).150B.%(ext)s").absolutePath)
+        request.addOption("-f", choice.formatSelector)
+
+        if (choice.mergeToMp4) {
+            request.addOption("--merge-output-format", "mp4")
+        }
+        choice.extractAudioFormat?.let { format ->
+            request.addOption("--extract-audio")
+            request.addOption("--audio-format", format)
+            request.addOption("--audio-quality", "0")
+        }
+
+        YoutubeDL.getInstance().execute(request, processId) { progress, eta, line ->
+            onProgress(progress, eta, line ?: "")
+        }
+
+        return workDir.listFiles()
+            ?.filter {
+                it.isFile &&
+                    !it.name.endsWith(".part") &&
+                    !it.name.endsWith(".ytdl")
+            }
+            ?.maxByOrNull { it.lastModified() }
+            ?: throw IllegalStateException("The download finished but no file was produced.")
+    }
+
+    private companion object {
+        const val TAG = "ReelRelayDownload"
     }
 }
 

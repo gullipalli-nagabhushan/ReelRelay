@@ -125,6 +125,9 @@ The standalone app lives in `android/` and is ordinary Kotlin/Gradle:
 - UI, player and share-sheet handling: `MainActivity.kt`
 - extraction/download state: `MainViewModel.kt`
 - yt-dlp execution and MediaStore publishing: `DownloadRepository.kt`
+- parallel range downloads: `SegmentDownloader.kt`
+- ffmpeg remux/convert: `FfmpegRunner.kt`
+- accelerated download orchestration: `ParallelDownload.kt`
 - format and preview selection: `Formats.kt`
 - JVM unit tests: `android/app/src/test/`
 
@@ -135,10 +138,14 @@ cd android
 ./gradlew testDebugUnitTest assembleDebug
 ```
 
+The APK targets `arm64-v8a` by default so it stays around 60 MB with Python and
+ffmpeg bundled. Pass `-Preelrelay.abis=...` when you need another architecture.
+
 Do not commit `android/local.properties`, `.gradle/` or build outputs; CI builds
 the debug APK on every push and uploads it as an artifact. When changing format
 selection, extend `FormatsTest.kt` so the behaviour is covered without a
-device.
+device. `SegmentDownloaderTest.kt` runs against a local `HttpServer` and must
+stay offline.
 
 ## Commit messages
 

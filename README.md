@@ -53,7 +53,7 @@ user.
 | Metadata | Title, artist, album, composer, genre, year and track, editable before download |
 | Cover art | Best thumbnail embedded as ID3 `APIC` (MP3) or FLAC picture |
 | Inline preview | Play the video in the page before downloading; a small progressive rendition is relayed to a native `<video>` player |
-| Android app | Standalone Kotlin app in `android/` with bundled yt-dlp + ffmpeg, inline ExoPlayer preview and MediaStore downloads |
+| Android app | Standalone Kotlin app in `android/` with bundled yt-dlp + ffmpeg, parallel high-resolution downloads, inline ExoPlayer preview and MediaStore downloads |
 | Zero storage | Relay or ffmpeg pipe; no media cache and no app-managed downloads folder |
 | Fast high-res | Parallel-range accelerator feeds ffmpeg over up to 12 connections, staying in memory |
 | Resilient relay | Resumes truncated CDN connections with HTTP `Range` requests (bounded retries) |
@@ -450,6 +450,9 @@ extraction, merging and audio conversion all run on the phone.
 - The app shows the thumbnail, title, duration and an inline ExoPlayer preview
   of the smallest progressive stream.
 - Pick any video height or an audio format, then download.
+- High-resolution tracks are fetched over 12 parallel `Range` connections, the
+  same trick the desktop app uses, then remuxed on the phone by the bundled
+  ffmpeg. If a stream cannot be split, yt-dlp handles it automatically.
 - Finished files are published through MediaStore to `Downloads/ReelRelay`
   (MediaStore on Android 10+, public Downloads plus a permission prompt below
   that).
@@ -463,9 +466,16 @@ cd android
 ```
 
 The first build downloads Gradle 8.14.3 and the Android dependencies, so allow
-a few minutes. The debug APK is large (roughly 200 MB) because it bundles the
-Python runtime, yt-dlp and ffmpeg for four ABIs so it runs on any phone or
-emulator. CI builds the same APK on every push and uploads it as the
+a few minutes. The APK stays around 60 MB because it targets `arm64-v8a` by
+default — the architecture of every current phone — while still bundling the
+Python runtime, yt-dlp and ffmpeg. Add more ABIs only if you need them:
+
+```bash
+./gradlew assembleDebug -Preelrelay.abis=arm64-v8a,armeabi-v7a
+./gradlew assembleDebug -Preelrelay.abis=arm64-v8a,armeabi-v7a,x86,x86_64  # ~200 MB
+```
+
+CI builds the default arm64 APK on every push and uploads it as the
 `reelrelay-android-debug` artifact. Release signing is intentionally not
 configured: sideload the debug APK, or add your own keystore for a release
 build.

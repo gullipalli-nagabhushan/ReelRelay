@@ -5,12 +5,24 @@ import com.yausername.youtubedl_android.mapper.VideoInfo
 import java.util.Locale
 import kotlin.math.min
 
+/** A direct media URL that can be fetched with parallel range requests. */
+data class DownloadSource(
+    val url: String,
+    val headers: Map<String, String>,
+    val formatId: String,
+    val ext: String,
+    val size: Long,
+    val codec: String?,
+)
+
 /** One row in the format picker. */
 data class FormatChoice(
     val label: String,
     val formatSelector: String,
     val mergeToMp4: Boolean = false,
     val extractAudioFormat: String? = null,
+    val video: DownloadSource? = null,
+    val audio: DownloadSource? = null,
 )
 
 /** Everything the preview card needs, already flattened for the UI. */
@@ -90,7 +102,10 @@ private fun bestVideoAtHeight(formats: List<VideoFormat>): VideoFormat? {
 
 private fun bestAudio(formats: List<VideoFormat>): VideoFormat? {
     return formats
-        .filter { isMissing(it.vcodec) && !isMissing(it.acodec) && (it.abr > 0 || it.tbr > 0) }
+        .filter {
+            isMissing(it.vcodec) && !isMissing(it.acodec) && (it.abr > 0 || it.tbr > 0) &&
+                !it.url.isNullOrBlank()
+        }
         .maxByOrNull { if (it.abr > 0) it.abr else it.tbr }
 }
 
@@ -118,6 +133,36 @@ private fun previewHeaders(format: VideoFormat, info: VideoInfo): Map<String, St
             "(KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
     )
     return merged
+}
+
+/**
+ * A direct source for the parallel downloader, or `null` when yt-dlp must
+ * handle the stream (manifests, missing URLs, unknown sizes).
+ */
+private fun downloadSource(
+    format: VideoFormat,
+    info: VideoInfo,
+    duration: Int,
+): DownloadSource? {
+    val url = format.url
+    if (url.isNullOrBlank() || isManifestUrl(url) || !format.manifestUrl.isNullOrBlank()) {
+        return null
+    }
+    val codec = format.acodec?.takeIf { !isMissing(it) }
+        ?: format.vcodec?.takeIf { !isMissing(it) }
+    return DownloadSource(
+        url = url,
+        headers = previewHeaders(format, info),
+        formatId = format.formatId.orEmpty(),
+        ext = format.ext ?: "mp4",
+        size = estimatedBytes(format, duration),
+        codec = codec,
+    )
+}
+
+private fun isManifestUrl(url: String): Boolean {
+    val path = url.substringBefore('?').lowercase(Locale.US)
+    return path.endsWith(".m3u8") || path.endsWith(".mpd") || path.endsWith(".ism")
 }
 
 /** Turn a raw yt-dlp payload into the small model the UI renders. */
@@ -165,21 +210,46 @@ fun buildSummary(info: VideoInfo): MediaSummary {
             append("Video · ${height}p · ${extension.uppercase()}")
             if (size.isNotEmpty()) append(" · ~$size")
         }
+        val videoSource = downloadSource(video, info, duration)
+        val audioSource = audio?.let { downloadSource(it, info, duration) }
         videoChoices.add(
             FormatChoice(
                 label = label,
                 formatSelector = selector,
                 mergeToMp4 = merge,
+                video = videoSource,
+                audio = if (merge) audioSource else null,
             )
         )
     }
 
     val audioChoices = buildList {
+        val audioSource = audio?.let { downloadSource(it, info, duration) }
         if (audio != null) {
-            add(FormatChoice("Audio · original stream (${(audio.ext ?: "m4a").uppercase()})", "bestaudio/best"))
+            add(
+                FormatChoice(
+                    "Audio · original stream (${(audio.ext ?: "m4a").uppercase()})",
+                    "bestaudio/best",
+                    audio = audioSource,
+                )
+            )
         }
-        add(FormatChoice("Audio · MP3 320 kbps", "bestaudio/best", extractAudioFormat = "mp3"))
-        add(FormatChoice("Audio · M4A 256 kbps", "bestaudio/best", extractAudioFormat = "m4a"))
+        add(
+            FormatChoice(
+                "Audio · MP3 320 kbps",
+                "bestaudio/best",
+                extractAudioFormat = "mp3",
+                audio = audioSource,
+            )
+        )
+        add(
+            FormatChoice(
+                "Audio · M4A 256 kbps",
+                "bestaudio/best",
+                extractAudioFormat = "m4a",
+                audio = audioSource,
+            )
+        )
     }
 
     val progressive = bestProgressive(formats)

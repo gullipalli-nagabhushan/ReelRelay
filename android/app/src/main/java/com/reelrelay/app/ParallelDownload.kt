@@ -1,0 +1,139 @@
+package com.reelrelay.app
+
+import android.content.Context
+import java.io.File
+import java.util.Locale
+
+/**
+ * Accelerated path for a format that has direct stream URLs.
+ *
+ * Downloads the selected video and audio tracks with [SegmentDownloader] and
+ * muxes them with the bundled ffmpeg, or converts audio to the chosen profile.
+ * Returns `null` when the choice cannot be parallelised, in which case the
+ * caller falls back to yt-dlp.
+ */
+object ParallelDownload {
+
+    suspend fun download(
+        context: Context,
+        title: String,
+        choice: FormatChoice,
+        workDir: File,
+        onProgress: (Float, Long, String) -> Unit,
+    ): File? {
+        val video = choice.video
+        val audio = choice.audio
+        if (video == null && audio == null) return null
+        if (choice.mergeToMp4 && (video == null || audio == null)) return null
+
+        val base = sanitizeFileName(title)
+        val downloader = SegmentDownloader()
+
+        // Audio-only source: either keep the original stream or convert it.
+        if (video == null && audio != null) {
+            if (choice.extractAudioFormat == null) {
+                val target = File(workDir, "$base.${audio.extensionOr("m4a")}")
+                downloadStream(downloader, audio, target, onProgress, "audio", 0f, 99f)
+                onProgress(100f, 0L, "Saved ${target.name}")
+                return target
+            }
+
+            val source = File(workDir, "$base.source.${audio.extensionOr("m4a")}")
+            downloadStream(downloader, audio, source, onProgress, "audio", 0f, 88f)
+            return try {
+                val target = File(workDir, "$base.${choice.extractAudioFormat}")
+                onProgress(90f, 0L, "Converting to ${choice.extractAudioFormat.uppercase(Locale.US)}…")
+                FfmpegRunner.convertAudio(context, source, target, choice.extractAudioFormat, audio.codec)
+                onProgress(100f, 0L, "Saved ${target.name}")
+                target
+            } finally {
+                source.delete()
+            }
+        }
+
+        val videoSource = video ?: return null
+        val videoFile = if (audio == null) {
+            File(workDir, "$base.${videoSource.extensionOr("mp4")}")
+        } else {
+            File(workDir, "$base.video.${videoSource.extensionOr("mp4")}")
+        }
+        downloadStream(
+            downloader,
+            videoSource,
+            videoFile,
+            onProgress,
+            "video",
+            0f,
+            if (audio == null) 99f else 84f,
+        )
+        if (audio == null) {
+            onProgress(100f, 0L, "Saved ${videoFile.name}")
+            return videoFile
+        }
+
+        val audioFile = File(workDir, "$base.audio.${audio.extensionOr("m4a")}")
+        downloadStream(downloader, audio, audioFile, onProgress, "audio", 84f, 96f)
+
+        val merged = File(workDir, "$base.mp4")
+        return try {
+            onProgress(97f, 0L, "Merging video and audio…")
+            FfmpegRunner.merge(context, videoFile, audioFile, merged)
+            onProgress(100f, 0L, "Saved ${merged.name}")
+            merged
+        } finally {
+            videoFile.delete()
+            audioFile.delete()
+        }
+    }
+
+    private suspend fun downloadStream(
+        downloader: SegmentDownloader,
+        source: DownloadSource,
+        destination: File,
+        onProgress: (Float, Long, String) -> Unit,
+        label: String,
+        fromPercent: Float,
+        toPercent: Float,
+    ) {
+        val started = System.currentTimeMillis()
+        downloader.download(
+            url = source.url,
+            headers = source.headers,
+            destination = destination,
+            expectedSize = source.size,
+        ) { done, total ->
+            val fraction = if (total > 0L) done.toDouble() / total else 1.0
+            val percent = fromPercent + ((toPercent - fromPercent) * fraction).toFloat()
+            val seconds = (System.currentTimeMillis() - started) / 1000.0
+            val speed = if (seconds >= 0.5) done / seconds else 0.0
+            val eta = if (speed > 0.0 && total > done) ((total - done) / speed).toLong() else 0L
+            val detail = buildString {
+                append("Downloading ").append(label)
+                append(" · ").append(SegmentDownloader.DEFAULT_CONNECTIONS).append(" connections")
+                val rate = formatSpeed(speed)
+                if (rate.isNotEmpty()) append(" · ").append(rate)
+            }
+            onProgress(percent.coerceIn(0f, 100f), eta, detail)
+        }
+    }
+}
+
+/** Keep MediaStore and FAT-formatted SD cards happy. */
+internal fun sanitizeFileName(raw: String): String {
+    val cleaned = raw
+        .replace(Regex("[\\\\/:*?\"<>|\\u0000-\\u001f]"), "_")
+        .trim()
+        .trimEnd('.')
+        .take(150)
+    return cleaned.ifBlank { "ReelRelay" }
+}
+
+internal fun DownloadSource.extensionOr(fallback: String): String =
+    ext.ifBlank { fallback }
+
+private fun formatSpeed(bytesPerSecond: Double): String = when {
+    bytesPerSecond <= 0.0 -> ""
+    bytesPerSecond >= 1024 * 1024 -> String.format(Locale.US, "%.1f MB/s", bytesPerSecond / 1024 / 1024)
+    bytesPerSecond >= 1024 -> String.format(Locale.US, "%.0f KB/s", bytesPerSecond / 1024)
+    else -> String.format(Locale.US, "%.0f B/s", bytesPerSecond)
+}

@@ -24,6 +24,12 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   and ffmpeg, previews with ExoPlayer, downloads or extracts audio on the
   device, publishes to `Downloads/ReelRelay` through MediaStore, and accepts
   links shared from other apps.
+- Android parallel downloads. Direct video/audio streams are fetched with 12
+  ranged connections and remuxed by the bundled ffmpeg, matching the desktop
+  accelerator; anything that cannot be split falls back to yt-dlp.
+- ABI selection for the Android build. The APK targets `arm64-v8a` by default
+  (about 60 MB with Python and ffmpeg still bundled); pass
+  `-Preelrelay.abis=...` to build additional architectures.
 - Android CI job that runs the app's JVM unit tests and uploads a debug APK
   artifact.
 - MIT license.

@@ -5,6 +5,19 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// Python and ffmpeg are bundled per ABI, so shipping all four costs ~200 MB.
+// One ABI keeps the APK around 60 MB and covers every modern phone. Override:
+//   ./gradlew assembleDebug -Preelrelay.abis=arm64-v8a,armeabi-v7a
+val reelrelayAbis = (project.findProperty("reelrelay.abis") as String?)
+    ?.split(",")
+    ?.map { it.trim() }
+    ?.filter { it.isNotEmpty() }
+    ?: listOf("arm64-v8a")
+val knownAbis = setOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
+require(reelrelayAbis.all { it in knownAbis }) {
+    "Unknown ABI in -Preelrelay.abis: $reelrelayAbis (expected one of $knownAbis)"
+}
+
 android {
     namespace = "com.reelrelay.app"
     compileSdk = 36
@@ -17,7 +30,7 @@ android {
         versionName = "3.0.0"
 
         ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
+            abiFilters += reelrelayAbis
         }
     }
 
@@ -65,6 +78,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("io.coil-kt:coil:2.7.0")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     implementation("androidx.media3:media3-exoplayer:1.5.1")
     implementation("androidx.media3:media3-ui:1.5.1")
@@ -74,4 +88,5 @@ dependencies {
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("com.fasterxml.jackson.core:jackson-databind:2.17.2")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 }

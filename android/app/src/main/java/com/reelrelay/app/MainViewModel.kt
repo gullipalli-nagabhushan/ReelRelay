@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.yausername.youtubedl_android.YoutubeDL
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -118,7 +119,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             var produced: File? = null
             try {
                 val file = withContext(Dispatchers.IO) {
-                    repository.download(url, choice, processId) { progress, eta, line ->
+                    repository.download(url, info.title, choice, processId) { progress, eta, line ->
                         _state.update {
                             it.copy(
                                 progress = progress.coerceIn(0f, 100f).toInt(),
@@ -144,6 +145,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         savedName = if (uri != null) file.name else null,
                     )
                 }
+            } catch (cancel: CancellationException) {
+                throw cancel
             } catch (t: Throwable) {
                 val message = if (t is YoutubeDL.CanceledException) {
                     "Download cancelled."
