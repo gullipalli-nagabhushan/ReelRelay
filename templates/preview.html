@@ -71,30 +71,47 @@
             </div>
 
             <div class="media-actions">
-                {% if media.is_youtube %}
-                <button class="btn btn-soft" type="button" data-bs-toggle="collapse" data-bs-target="#embedPreview"
-                        aria-expanded="false" aria-controls="embedPreview">
-                    <i class="bi bi-play-circle"></i> Watch preview
-                </button>
-                {% endif %}
                 <a class="btn btn-soft" href="{{ media.webpage_url }}" target="_blank" rel="noopener noreferrer">
                     <i class="bi bi-box-arrow-up-right"></i> Open original
                 </a>
             </div>
-
-            {% if media.is_youtube %}
-            <div class="collapse embed-collapse" id="embedPreview">
-                <div class="ratio ratio-16x9">
-                    <iframe src="https://www.youtube-nocookie.com/embed/{{ media.video_id }}"
-                            title="YouTube preview" loading="lazy"
-                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                            referrerpolicy="strict-origin-when-cross-origin"
-                            allowfullscreen></iframe>
-                </div>
-            </div>
-            {% endif %}
         </div>
     </article>
+
+    {% if media.preview_available %}
+    <section class="player-card" aria-labelledby="previewHeading">
+        <header class="player-head">
+            <div>
+                <p class="section-kicker"><i class="bi bi-play-circle"></i> Preview</p>
+                <h2 id="previewHeading">Play before you download</h2>
+                <p class="player-sub">
+                    Streamed live from {{ media.platform_label }} in {{ media.preview_quality }}.
+                    Press play — nothing is saved to this computer.
+                </p>
+            </div>
+            <span class="chip chip-strong">
+                <i class="bi bi-badge-hd"></i>
+                {{ media.preview_quality }} · {{ media.preview_container|upper }}
+            </span>
+        </header>
+        <div class="player-stage{% if media.vertical %} player-stage-vertical{% endif %}">
+            <video id="inlinePreview"
+                   class="inline-preview-video"
+                   controls
+                   playsinline
+                   preload="none"
+                   {% if media.thumbnail %}poster="{{ media.thumbnail }}"{% endif %}
+                   src="/preview/stream?url={{ media.input_url|urlencode }}"></video>
+            <div class="player-fallback" id="previewFallback" hidden>
+                <i class="bi bi-exclamation-triangle"></i>
+                <p>Inline playback is not available for this link right now.</p>
+                <a class="btn btn-soft" href="{{ media.webpage_url }}" target="_blank" rel="noopener noreferrer">
+                    <i class="bi bi-box-arrow-up-right"></i> Open original
+                </a>
+            </div>
+        </div>
+    </section>
+    {% endif %}
 
     <section class="download-card">
         <header class="download-header">
@@ -388,6 +405,8 @@
         const fallbackEl = document.getElementById('downloadFallback');
         const saveEl = document.getElementById('downloadSave');
         const dismissBtn = document.getElementById('downloadDismiss');
+        const player = document.getElementById('inlinePreview');
+        const previewFallback = document.getElementById('previewFallback');
 
         const fieldIds = ['tagTitle', 'tagArtist', 'tagAlbum', 'tagComposer', 'tagGenre', 'tagYear', 'tagTrack'];
         const paramNames = ['title', 'artist', 'album', 'composer', 'genre', 'year', 'track'];
@@ -731,6 +750,18 @@
         document.querySelectorAll('.download-trigger').forEach((button) => {
             button.addEventListener('click', () => startDownload(button));
         });
+
+        if (player) {
+            player.addEventListener('error', () => {
+                player.hidden = true;
+                if (previewFallback) previewFallback.hidden = false;
+                window.ReelRelay.toast(
+                    'Inline preview is unavailable for this link — download the file instead.',
+                    'warning',
+                    7000
+                );
+            });
+        }
 
         if (dismissBtn) dismissBtn.addEventListener('click', hideOverlay);
         if (overlay) {

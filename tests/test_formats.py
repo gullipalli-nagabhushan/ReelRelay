@@ -5,13 +5,14 @@ from __future__ import annotations
 import pytest
 
 from core import config
-from core.download import _ffmpeg_input, build_plan
+from core.download import _ffmpeg_input, build_plan, plan_preview
 from core.ytdlp import (
     UnavailableError,
     build_audio_options,
     build_video_options,
     find_audio_format,
     find_video_format,
+    pick_preview_option,
 )
 
 
@@ -194,3 +195,69 @@ def test_plan_audio_requires_ffmpeg(sample_info: dict, monkeypatch: pytest.Monke
 
     with pytest.raises(UnavailableError):
         build_plan(sample_info, kind="audio", profile="mp3_320")
+
+
+def test_preview_picks_smallest_progressive(sample_info: dict, ffmpeg_enabled: None) -> None:
+    option = pick_preview_option(sample_info)
+
+    assert option is not None
+    assert option["height"] == 360
+    assert option["needs_merge"] is False
+    assert option["container"] == "mp4"
+
+
+def _preview_option(height: int, *, container: str = "mp4", merge: bool = False) -> dict:
+    return {
+        "id": f"v{height}",
+        "container": container,
+        "height": height,
+        "needs_merge": merge,
+        "estimated_size": height * 10,
+    }
+
+
+def test_preview_skips_144p_when_360p_exists() -> None:
+    catalog = [_preview_option(144), _preview_option(360), _preview_option(720)]
+
+    option = pick_preview_option({}, catalog)
+
+    assert option is not None and option["height"] == 360
+
+
+def test_preview_falls_back_to_largest_small_rendition() -> None:
+    catalog = [_preview_option(144), _preview_option(240)]
+
+    option = pick_preview_option({}, catalog)
+
+    assert option is not None and option["height"] == 240
+
+
+def test_plan_preview_relays_a_playable_stream(
+    sample_info: dict, ffmpeg_enabled: None
+) -> None:
+    plan = plan_preview(sample_info)
+
+    assert plan is not None
+    assert plan.mode == "relay"
+    assert plan.media_type == "video/mp4"
+    assert plan.stream_url == "https://media.example/18.mp4"
+
+
+def test_preview_handles_portrait_progressive(progressive_info: dict, ffmpeg_enabled: None) -> None:
+    option = pick_preview_option(progressive_info)
+    plan = plan_preview(progressive_info)
+
+    assert option is not None and option["height"] == 720
+    assert plan is not None
+    assert plan.mode == "relay"
+    assert plan.media_type == "video/mp4"
+
+
+def test_preview_returns_none_for_audio_only(sample_info: dict) -> None:
+    audio_only = {
+        **sample_info,
+        "formats": [fmt for fmt in sample_info["formats"] if fmt["vcodec"] == "none"],
+    }
+
+    assert pick_preview_option(audio_only) is None
+    assert plan_preview(audio_only) is None

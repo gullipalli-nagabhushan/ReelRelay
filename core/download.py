@@ -27,6 +27,7 @@ from .ytdlp import (
     find_audio_format,
     find_video_format,
     normalize_metadata,
+    pick_preview_option,
     platform_label,
 )
 
@@ -347,6 +348,32 @@ def plan_video(
         audio_format=audio_fmt,
         headers=_stream_headers(video_fmt, platform),
     )
+
+
+def plan_preview(info: dict[str, Any]) -> DownloadPlan | None:
+    """Build a small, browser-playable plan for the inline preview player.
+
+    Returns ``None`` when the link exposes no rendition a ``<video>`` element
+    can play, so the page can fall back to a thumbnail instead of a broken
+    player.
+    """
+    option = pick_preview_option(info)
+    if option is None:
+        return None
+    try:
+        plan = plan_video(
+            info,
+            option_id=option["id"],
+            height=None,
+            container=None,
+            tags_override=None,
+        )
+    except UnavailableError:
+        return None
+    if plan.media_type not in ("video/mp4", "video/webm", "video/x-matroska", "video/quicktime"):
+        return None
+    plan.notes.append("Preview stream — small and optimised for instant playback.")
+    return plan
 
 
 def plan_audio(

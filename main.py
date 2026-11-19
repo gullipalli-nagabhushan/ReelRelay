@@ -20,13 +20,13 @@ from urllib.parse import urlencode
 
 import yt_dlp
 from fastapi import FastAPI, Form, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 
 from core import config
-from core.download import DownloadPlan, build_plan, prepare_stream
+from core.download import DownloadPlan, build_plan, plan_preview, prepare_stream
 from core.examples import get_examples
 from core.progress import progress
 from core.streaming import DownloadError
@@ -222,6 +222,82 @@ async def preview(request: Request, media_url: str = Form(...)):
     context = _base_context(request)
     context.update({"media": view})
     return templates.TemplateResponse(request=request, name="preview.html", context=context)
+
+
+# --------------------------------------------------------------------------- #
+# Inline preview stream
+# --------------------------------------------------------------------------- #
+
+
+@app.get("/preview/stream")
+async def preview_stream(request: Request, url: str = Query(..., min_length=3)):
+    """Stream a small rendition straight to the inline ``<video>`` player.
+
+    The stream is relayed from the source (or muxed live by ffmpeg) and is
+    never written to disk. Previews share the download slot guard so a pile of
+    open players cannot starve real downloads.
+    """
+    if not is_valid_url(url):
+        return PlainTextResponse("Not a supported video URL.", status_code=400)
+
+    if not _acquire_slot():
+        return PlainTextResponse(
+            "ReelRelay is busy right now. Wait a moment and press play again.",
+            status_code=429,
+            headers={"Retry-After": "5"},
+        )
+
+    plan: DownloadPlan | None = None
+    try:
+        info = await run_in_threadpool(get_info, url)
+        plan = await run_in_threadpool(plan_preview, info)
+        if plan is None:
+            _release_slot()
+            return PlainTextResponse(
+                "This link has no inline-playable stream. Use Open original or download it instead.",
+                status_code=404,
+            )
+        prepared = await run_in_threadpool(prepare_stream, plan)
+    except (ExtractionError, UnavailableError, DownloadError) as exc:
+        _release_slot()
+        return PlainTextResponse(str(exc), status_code=422)
+    except Exception:  # noqa: BLE001
+        _release_slot()
+        logger.exception("Preview stream failed for %s", url)
+        return PlainTextResponse("The preview stream could not be started.", status_code=500)
+
+    logger.info(
+        "Previewing %s (%s) from %s — %s",
+        plan.filename,
+        plan.quality,
+        plan.platform,
+        plan.mode,
+    )
+
+    async def body():
+        try:
+            async for chunk in iterate_in_threadpool(prepared.chunks):
+                yield chunk
+        finally:
+            try:
+                prepared.close()
+            finally:
+                _release_slot()
+
+    headers = {
+        "Content-Disposition": content_disposition(plan.filename, inline=True),
+        "Cache-Control": "no-store, no-transform",
+        "X-Accel-Buffering": "no",
+        "X-Preview-Quality": plan.quality,
+        "X-Preview-Mode": plan.mode,
+        # The relay starts at byte zero and plays forward; advertising ranges
+        # would make players seek into a stream that cannot be resumed.
+        "Accept-Ranges": "none",
+    }
+    if prepared.content_length:
+        headers["Content-Length"] = str(prepared.content_length)
+
+    return StreamingResponse(body(), media_type=plan.media_type, headers=headers)
 
 
 # --------------------------------------------------------------------------- #

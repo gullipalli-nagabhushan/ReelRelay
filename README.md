@@ -52,12 +52,14 @@ user.
 | Audio formats | Original stream, MP3 320/192, FLAC, M4A (AAC 256), WAV |
 | Metadata | Title, artist, album, composer, genre, year and track, editable before download |
 | Cover art | Best thumbnail embedded as ID3 `APIC` (MP3) or FLAC picture |
+| Inline preview | Play the video in the page before downloading; a small progressive rendition is relayed to a native `<video>` player |
+| Android app | Standalone Kotlin app in `android/` with bundled yt-dlp + ffmpeg, inline ExoPlayer preview and MediaStore downloads |
 | Zero storage | Relay or ffmpeg pipe; no media cache and no app-managed downloads folder |
 | Resilient relay | Resumes truncated CDN connections with HTTP `Range` requests (bounded retries) |
 | Live progress | Elapsed time, bytes, percentage, speed, ETA and stall detection |
 | Local by default | Binds to `127.0.0.1`; no accounts, telemetry, analytics or cloud storage |
 | One-click start | Windows launcher and desktop-shortcut creator, with automatic dependency setup |
-| Offline tests | 99 tests with synthetic yt-dlp payloads and a fake HTTP origin |
+| Offline tests | 108 tests with synthetic yt-dlp payloads and a fake HTTP origin |
 
 ## Tech stack
 
@@ -110,18 +112,21 @@ flowchart LR
 
 1. **Preview** — `POST /preview` validates the URL, runs yt-dlp in a threadpool,
    caches the metadata, and renders every deliverable video and audio option.
-2. **Prepare** — clicking Download calls `/api/prepare`. This builds a
+2. **Inline preview** — pressing play calls `/preview/stream`, which relays a
+   small (usually 360p) progressive rendition to the native `<video>` element.
+   The stream is never written to disk and shares the download slot guard.
+3. **Prepare** — clicking Download calls `/api/prepare`. This builds a
    `DownloadPlan` (filename, MIME type, stream URLs, ffmpeg arguments, tags) and
    returns a progress token plus the final `/download` URL. Planning is cheap
    and side-effect free, so invalid choices fail before the browser starts
    receiving bytes.
-3. **Download** — `/download` acquires a concurrency slot and opens exactly one
+4. **Download** — `/download` acquires a concurrency slot and opens exactly one
    pipeline:
    - **relay** for a single file that already contains video and audio;
    - **ffmpeg** for merging separate video/audio streams or transcoding audio.
-4. **Progress** — the preview page polls `/api/progress/{token}`. The registry is
+5. **Progress** — the preview page polls `/api/progress/{token}`. The registry is
    in memory, bounded to 512 entries, and pruned after an hour.
-5. **Cleanup** — the response ends, the slot is released, and no media file ever
+6. **Cleanup** — the response ends, the slot is released, and no media file ever
    existed on disk.
 
 ### Module map
@@ -174,6 +179,7 @@ flowchart LR
 ├── templates/                  # Jinja2 pages
 ├── static/                     # CSS, JavaScript, icons
 ├── docs/                       # README screenshots
+├── android/                    # Standalone Kotlin app (bundled yt-dlp + ffmpeg)
 ├── tests/                      # Offline pytest suite
 ├── .github/                    # CI, Dependabot, issue and PR templates
 ├── run-reelrelay.bat / .ps1    # Windows launcher
@@ -301,6 +307,7 @@ because the app is expected to run on loopback.
 | --- | --- | --- |
 | `GET` | `/` | Landing page. |
 | `POST` | `/preview` | Form field `media_url`; renders the preview page. |
+| `GET` | `/preview/stream?url=…` | Small inline-playable rendition for the `<video>` player. |
 | `GET` | `/api/info?url=…` | JSON metadata and all video/audio options. |
 | `GET` | `/api/prepare` | Validate a download choice; returns a plan, token and URL. |
 | `GET` | `/api/progress/{token}` | Snapshot for one download. |
@@ -418,6 +425,37 @@ deleted immediately after the request.
 - Metadata is cached in a small thread-safe LRU-style cache with a TTL.
 - Progress is in memory only and per process. Run **one** worker: multiple
   Uvicorn workers would split the cache, progress registry and semaphore.
+
+## Android app
+
+`android/` contains a standalone Kotlin app for Android 7.0+ (API 24+) that
+does not need a PC. It bundles yt-dlp's Python runtime and ffmpeg through
+[youtubedl-android](https://github.com/yausername/youtubedl-android), so
+extraction, merging and audio conversion all run on the phone.
+
+- Paste a link or share one from the YouTube, Instagram or Facebook app.
+- The app shows the thumbnail, title, duration and an inline ExoPlayer preview
+  of the smallest progressive stream.
+- Pick any video height or an audio format, then download.
+- Finished files are published through MediaStore to `Downloads/ReelRelay`
+  (MediaStore on Android 10+, public Downloads plus a permission prompt below
+  that).
+
+Build it locally with JDK 17 or newer and the Android SDK:
+
+```bash
+cd android
+./gradlew testDebugUnitTest assembleDebug
+# android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+The first build downloads Gradle 8.14.3 and the Android dependencies, so allow
+a few minutes. The debug APK is large (roughly 200 MB) because it bundles the
+Python runtime, yt-dlp and ffmpeg for four ABIs so it runs on any phone or
+emulator. CI builds the same APK on every push and uploads it as the
+`reelrelay-android-debug` artifact. Release signing is intentionally not
+configured: sideload the debug APK, or add your own keystore for a release
+build.
 
 ## Testing
 

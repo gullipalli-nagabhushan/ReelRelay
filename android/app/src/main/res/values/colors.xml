@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="rr_bg">#07080D</color>
+    <color name="rr_surface">#111522</color>
+    <color name="rr_surface_soft">#171C2B</color>
+    <color name="rr_rose">#FF3B5C</color>
+    <color name="rr_cyan">#4CD7F6</color>
+    <color name="rr_text">#F3F5FB</color>
+    <color name="rr_text_soft">#C4CADD</color>
+    <color name="rr_muted">#949CB4</color>
+    <color name="rr_white">#FFFFFF</color>
+</resources>

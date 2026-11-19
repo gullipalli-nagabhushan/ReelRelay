@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ReelRelay</string>
+    <string name="tagline">Download video and audio on your phone. No PC needed.</string>
+    <string name="url_hint">Paste a YouTube, Instagram or Facebook link</string>
+    <string name="preview">Preview</string>
+    <string name="download">Download</string>
+    <string name="cancel">Cancel download</string>
+    <string name="format_hint">Choose a format</string>
+    <string name="empty_url">Paste a link first.</string>
+    <string name="preview_unavailable">Inline preview is not available for this link. You can still download it.</string>
+    <string name="preparing">Reading the link…</string>
+    <string name="downloading">Downloading…</string>
+    <string name="saved">Saved to Downloads/ReelRelay</string>
+    <string name="storage_permission">Storage permission is needed to save on this Android version.</string>
+    <string name="startup">Starting the on-device engine…</string>
+</resources>

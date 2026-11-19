@@ -75,13 +75,18 @@ def clean_text(value: str | None, max_length: int = 300) -> str:
     return text[:max_length].strip()
 
 
-def content_disposition(filename: str) -> str:
-    """RFC 6266 header with an ASCII fallback and UTF-8 support."""
+def content_disposition(filename: str, *, inline: bool = False) -> str:
+    """RFC 6266 header with an ASCII fallback and UTF-8 support.
+
+    ``inline`` is used by the preview player so the browser renders the stream
+    instead of offering it as a save-as download.
+    """
     fallback = (
         filename.encode("ascii", "ignore").decode("ascii").replace('"', "'").strip()
         or "download"
     )
+    disposition = "inline" if inline else "attachment"
     return (
-        f'attachment; filename="{fallback}"; '
+        f'{disposition}; filename="{fallback}"; '
         f"filename*=UTF-8''{quote(filename, safe='')}"
     )

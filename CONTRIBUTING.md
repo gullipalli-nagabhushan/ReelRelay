@@ -67,8 +67,9 @@ Guidelines:
 - CI runs the suite on Ubuntu and Windows with Python 3.11 through 3.15.
 
 The current suite covers URL validation, metadata derivation, format discovery,
-download planning, progress tracking, the ID3 writer, and resumable relay
-behaviour.
+download planning, inline preview selection, progress tracking, the ID3 writer,
+and resumable relay behaviour. The Android app has its own JVM unit tests for
+format and preview selection (`android/app/src/test`).
 
 ## Project conventions
 
@@ -110,7 +111,31 @@ the plan builder in `core/download.py`.
 
 Templates are Jinja2 files under `templates/`; styles and browser code are under
 `static/`. The UI must remain usable without a build step, and every new control
-should work with keyboard navigation.
+should work with keyboard navigation. The inline player is a plain
+`<video preload="none">` fed by `/preview/stream`; keep it keyboard-accessible
+and provide the existing fallback when a link has no playable stream.
+
+### Android app
+
+The standalone app lives in `android/` and is ordinary Kotlin/Gradle:
+
+- UI, player and share-sheet handling: `MainActivity.kt`
+- extraction/download state: `MainViewModel.kt`
+- yt-dlp execution and MediaStore publishing: `DownloadRepository.kt`
+- format and preview selection: `Formats.kt`
+- JVM unit tests: `android/app/src/test/`
+
+Build with JDK 17 or newer and an installed Android SDK:
+
+```bash
+cd android
+./gradlew testDebugUnitTest assembleDebug
+```
+
+Do not commit `android/local.properties`, `.gradle/` or build outputs; CI builds
+the debug APK on every push and uploads it as an artifact. When changing format
+selection, extend `FormatsTest.kt` so the behaviour is covered without a
+device.
 
 ## Commit messages
 

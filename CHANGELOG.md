@@ -9,6 +9,16 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- Inline preview player on the preview page. `GET /preview/stream` relays a
+  small (360p where available) browser-playable rendition, preferring a
+  progressive stream, to a native `<video>` element, with a graceful
+  "open original" fallback when a link exposes no playable stream.
+- Standalone Android app under `android/`. It bundles yt-dlp's Python runtime
+  and ffmpeg, previews with ExoPlayer, downloads or extracts audio on the
+  device, publishes to `Downloads/ReelRelay` through MediaStore, and accepts
+  links shared from other apps.
+- Android CI job that runs the app's JVM unit tests and uploads a debug APK
+  artifact.
 - MIT license.
 - Contributor guide, security policy, code of conduct and changelog.
 - GitHub issue forms, pull-request template, Dependabot config and CI workflow.

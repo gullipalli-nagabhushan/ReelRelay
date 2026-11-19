@@ -101,3 +101,11 @@ htmlcov/
 # yt-dlp cache
 .cache/
 .ytdl/
+
+# Android / Gradle
+android/.gradle/
+android/local.properties
+android/.kotlin/
+android/app/release/
+*.apk
+*.aab

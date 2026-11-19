@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.ReelRelay" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="colorPrimary">@color/rr_rose</item>
+        <item name="colorOnPrimary">@color/rr_white</item>
+        <item name="colorPrimaryContainer">@color/rr_rose</item>
+        <item name="colorOnPrimaryContainer">@color/rr_white</item>
+        <item name="colorSecondary">@color/rr_cyan</item>
+        <item name="colorOnSecondary">@color/rr_bg</item>
+        <item name="android:colorBackground">@color/rr_bg</item>
+        <item name="colorSurface">@color/rr_surface</item>
+        <item name="colorOnSurface">@color/rr_text</item>
+        <item name="colorSurfaceVariant">@color/rr_surface_soft</item>
+        <item name="colorOnSurfaceVariant">@color/rr_text_soft</item>
+        <item name="android:statusBarColor">@color/rr_bg</item>
+        <item name="android:navigationBarColor">@color/rr_bg</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

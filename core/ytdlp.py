@@ -937,6 +937,47 @@ def build_video_options(info: dict[str, Any]) -> list[dict[str, Any]]:
     return options
 
 
+# Containers a browser <video> element can usually play without plugins.
+PREVIEW_CONTAINERS = ("mp4", "m4v", "webm", "mov")
+
+
+def pick_preview_option(
+    info: dict[str, Any], options: list[dict[str, Any]] | None = None
+) -> dict[str, Any] | None:
+    """Choose the cheapest browser-playable rendition for the inline player.
+
+    The preview is deliberately small: a 360p progressive stream is enough to
+    confirm the right video and starts almost instantly, while a 4K merge would
+    burn CPU before the first byte reaches the player. Progressive streams
+    (audio already inside the file) win over ffmpeg merges at the same height.
+    """
+    catalog = options if options is not None else build_video_options(info)
+    playable = [
+        option
+        for option in catalog
+        if str(option.get("container")) in PREVIEW_CONTAINERS
+    ]
+    if not playable:
+        return None
+
+    def rank(option: dict[str, Any]) -> tuple:
+        return (
+            int(option.get("height") or 0),
+            0 if not option.get("needs_merge") else 1,
+            0 if option.get("container") == "mp4" else 1,
+            int(option.get("estimated_size") or 0),
+        )
+
+    ordered = sorted(playable, key=rank)
+    # 360p is the sweet spot: readable on a laptop and cheap enough to start
+    # almost instantly. When a link only offers smaller renditions, the largest
+    # one below 360p is still better than nothing.
+    return next(
+        (option for option in ordered if int(option.get("height") or 0) >= 360),
+        ordered[-1],
+    )
+
+
 # Audio profiles that require ffmpeg. Order is the order shown in the UI.
 AUDIO_PROFILES: dict[str, dict[str, Any]] = {
     "mp3_320": {
@@ -1103,6 +1144,7 @@ def build_view(info: dict[str, Any]) -> dict[str, Any]:
     has_hdr = any(option.get("hdr") for option in video_options)
     has_60fps = any(option.get("fps", 0) >= 50 for option in video_options)
     vertical = any(option.get("vertical") for option in video_options)
+    preview_option = pick_preview_option(info, video_options)
 
     if source:
         audio_source = (
@@ -1126,6 +1168,10 @@ def build_view(info: dict[str, Any]) -> dict[str, Any]:
             "vertical": vertical,
             "has_original_audio": bool(source),
             "audio_source": audio_source,
+            "preview_available": preview_option is not None,
+            "preview_quality": preview_option["quality"] if preview_option else "",
+            "preview_container": preview_option["container"] if preview_option else "",
+            "preview_height": preview_option["height"] if preview_option else 0,
             "ffmpeg_ok": config.FFMPEG_OK,
             "tags": {
                 "title": metadata["song_title"],
