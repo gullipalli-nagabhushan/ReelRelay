@@ -50,6 +50,10 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Fixed
 
+- Android downloads no longer fail with `HTTP Error 403: Forbidden` on
+  high-resolution YouTube formats. The app now overrides youtubedl-android's
+  stale yt-dlp (2025.11.12) with the current release (2026.10.26), and replaces
+  the extracted copy whenever `BUNDLED_YTDLP_VERSION` changes.
 - Windows launcher no longer stops on a fresh install when Python writes to
   stderr while the launcher checks dependencies.
 - The launcher skips free-threaded Python builds (`3.13t`), which have no

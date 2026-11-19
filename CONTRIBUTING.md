@@ -141,6 +141,12 @@ cd android
 The APK targets `arm64-v8a` by default so it stays around 60 MB with Python and
 ffmpeg bundled. Pass `-Preelrelay.abis=...` when you need another architecture.
 
+`android/app/src/main/res/raw/ytdlp` is the yt-dlp release zipapp the app runs,
+overriding the older copy inside youtubedl-android. Refresh it from a GitHub
+release and bump `BUNDLED_YTDLP_VERSION` in `ReelRelayApp.kt`; the extracted
+copy is then replaced on the next launch. YouTube rejects stale extractors with
+`HTTP 403` on high-resolution formats, so keep it current.
+
 Do not commit `android/local.properties`, `.gradle/` or build outputs; CI builds
 the debug APK on every push and uploads it as an artifact. When changing format
 selection, extend `FormatsTest.kt` so the behaviour is covered without a

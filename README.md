@@ -475,6 +475,12 @@ Python runtime, yt-dlp and ffmpeg. Add more ABIs only if you need them:
 ./gradlew assembleDebug -Preelrelay.abis=arm64-v8a,armeabi-v7a,x86,x86_64  # ~200 MB
 ```
 
+The app ships its own current yt-dlp at `android/app/src/main/res/raw/ytdlp`
+(overriding the older copy inside youtubedl-android), because YouTube rejects
+stale extractors with `HTTP 403` on high-resolution formats. When you refresh
+that file, also bump `BUNDLED_YTDLP_VERSION` in `ReelRelayApp.kt` so existing
+installs replace the extracted copy on the next launch.
+
 CI builds the default arm64 APK on every push and uploads it as the
 `reelrelay-android-debug` artifact. Release signing is intentionally not
 configured: sideload the debug APK, or add your own keystore for a release

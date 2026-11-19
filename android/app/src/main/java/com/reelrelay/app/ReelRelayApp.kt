@@ -8,6 +8,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import java.io.File
 
 /**
  * Boots the bundled Python/yt-dlp/ffmpeg toolchain once per process.
@@ -29,6 +30,7 @@ class ReelRelayApp : Application() {
             if (!engine.isCompleted) {
                 engine.complete(
                     runCatching {
+                        refreshBundledYtDlp()
                         YoutubeDL.getInstance().init(this@ReelRelayApp)
                         FFmpeg.getInstance().init(this@ReelRelayApp)
                     }
@@ -37,5 +39,28 @@ class ReelRelayApp : Application() {
         }
     }
 
+    /**
+     * youtubedl-android unpacks its `res/raw/ytdlp` only when no copy exists,
+     * so a newer build shipped in an app update would otherwise be ignored.
+     * The extracted copy is dropped once whenever [BUNDLED_YTDLP_VERSION]
+     * changes, then recreated from the bundled resource on init.
+     */
+    private fun refreshBundledYtDlp() {
+        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+        if (prefs.getString(KEY_YTDLP_VERSION, null) == BUNDLED_YTDLP_VERSION) return
+        // Only the yt-dlp zipapp lives here; Python and ffmpeg are untouched.
+        File(noBackupFilesDir, YTDLP_PACKAGE_DIR).deleteRecursively()
+        prefs.edit().putString(KEY_YTDLP_VERSION, BUNDLED_YTDLP_VERSION).apply()
+    }
+
     suspend fun awaitEngine(): Result<Unit> = engine.await()
+
+    private companion object {
+        const val PREFS = "reelrelay-engine"
+        const val KEY_YTDLP_VERSION = "ytdlp-version"
+        const val YTDLP_PACKAGE_DIR = "youtubedl-android/packages/yt-dlp"
+
+        /** Keep in sync with `android/app/src/main/res/raw/ytdlp`. */
+        const val BUNDLED_YTDLP_VERSION = "2026.10.26"
+    }
 }
