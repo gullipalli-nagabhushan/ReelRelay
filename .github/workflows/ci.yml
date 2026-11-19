@@ -83,6 +83,14 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # The action defaults to "tools platform-tools", but Google removed
+          # the legacy "tools" package in September 2026, which makes
+          # sdkmanager fail before anything is built.
+          packages: "platform-tools"
+
+      - name: Install SDK platform and build tools
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
       - name: Build and test
         working-directory: android
