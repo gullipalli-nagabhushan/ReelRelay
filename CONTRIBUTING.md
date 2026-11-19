@@ -58,7 +58,8 @@ python -m pytest -q
 Guidelines:
 
 - Tests must be **offline**. Use the synthetic payloads in
-  `tests/conftest.py` and the fake HTTP origin in `tests/test_streaming.py`.
+  `tests/conftest.py` and the fake HTTP origins in `tests/test_streaming.py` and
+  `tests/test_accelerator.py`.
 - Do not add tests that call YouTube, Instagram, Facebook or any live CDN.
 - Add a regression test for every bug fix where practical.
 - Prefer small, focused tests over end-to-end tests that need ffmpeg.
@@ -78,6 +79,8 @@ format and preview selection (`android/app/src/test`).
 - Type hints are expected on public functions.
 - Keep the app streaming: do **not** write downloaded media to disk. Temporary
   files are allowed only for short-lived metadata work such as a FLAC cover.
+- High-resolution muxing may prefetch ranges in memory (`core/accelerator.py`),
+  but it must stay bounded and must never touch the filesystem.
 - Bind to `127.0.0.1` by default. Do not add an option that silently exposes the
   app to the network.
 - User-facing errors should be short, actionable and free of stack traces.

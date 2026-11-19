@@ -27,7 +27,7 @@ from . import config
 
 logger = logging.getLogger(__name__)
 
-CHUNK_SIZE = 64 * 1024
+CHUNK_SIZE = 256 * 1024
 FIRST_BYTE_TIMEOUT = 75  # seconds before a stalled ffmpeg process is killed
 
 

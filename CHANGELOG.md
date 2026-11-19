@@ -9,6 +9,13 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- Parallel-range download accelerator. High-resolution streams that ffmpeg
+  must mux are fetched over up to 12 HTTP `Range` connections into a bounded
+  in-memory window and exposed to ffmpeg through a localhost URL. On a 4K AV1
+  test stream this raised throughput from ~0.36 MiB/s (one connection) to
+  multiple MiB/s without writing media to disk. Tune it with
+  `PARALLEL_DOWNLOADS`, `PARALLEL_CONNECTIONS`, `PARALLEL_SEGMENT_MB`,
+  `PARALLEL_WINDOW_MB` and `PARALLEL_MAX_CONNECTIONS`.
 - Inline preview player on the preview page. `GET /preview/stream` relays a
   small (360p where available) browser-playable rendition, preferring a
   progressive stream, to a native `<video>` element, with a graceful

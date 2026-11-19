@@ -13,9 +13,10 @@ import logging
 import os
 import tempfile
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from . import config, cover, id3
+from .accelerator import open_accelerator
 from .streaming import DownloadError, FFmpegStream, PreparedStream, RelayStream
 from .utils import clean_text, human_size, sanitize_filename
 from .ytdlp import (
@@ -115,7 +116,53 @@ def _stream_headers(fmt: dict[str, Any], platform: str | None = None) -> dict[st
     return headers
 
 
-def _ffmpeg_input(fmt: dict[str, Any], platform: str | None = None) -> list[str]:
+def _is_manifest(fmt: dict[str, Any]) -> bool:
+    """Manifests must stay on the origin so relative segment URLs resolve."""
+    protocol = str(fmt.get("protocol") or "").lower()
+    if any(token in protocol for token in ("m3u8", "dash", "ism")):
+        return True
+    if fmt.get("manifest_url") or fmt.get("fragments"):
+        return True
+    path = str(fmt.get("url") or "").split("?", 1)[0].lower()
+    return path.endswith((".m3u8", ".mpd", ".ism"))
+
+
+def _input_url(
+    fmt: dict[str, Any],
+    platform: str | None,
+    *,
+    cleanups: list[Callable[[], None]] | None,
+    content_type: str,
+    label: str,
+) -> str:
+    """Return the URL ffmpeg should read, accelerating it when possible."""
+    url = str(fmt.get("url") or "")
+    if cleanups is None or not url or _is_manifest(fmt):
+        return url
+    try:
+        accelerator = open_accelerator(
+            url,
+            _stream_headers(fmt, platform),
+            content_type=content_type,
+            label=label,
+        )
+    except Exception:  # noqa: BLE001 - acceleration is best-effort
+        logger.exception("Download accelerator failed for %s; using the direct URL", label)
+        return url
+    if accelerator is None:
+        return url
+    cleanups.append(accelerator.close)
+    return accelerator.url
+
+
+def _ffmpeg_input(
+    fmt: dict[str, Any],
+    platform: str | None = None,
+    *,
+    cleanups: list[Callable[[], None]] | None = None,
+    content_type: str = "video/mp4",
+    label: str = "media",
+) -> list[str]:
     headers = _stream_headers(fmt, platform)
     header_lines = [
         f"Referer: {headers['Referer']}\r\n",
@@ -144,7 +191,13 @@ def _ffmpeg_input(fmt: dict[str, Any], platform: str | None = None) -> list[str]
         "-reconnect_delay_max",
         "5",
         "-i",
-        str(fmt["url"]),
+        _input_url(
+            fmt,
+            platform,
+            cleanups=cleanups,
+            content_type=content_type,
+            label=label,
+        ),
     ]
 
 
@@ -476,12 +529,28 @@ def plan_audio(
 # --------------------------------------------------------------------------- #
 
 
-def _video_command(plan: DownloadPlan) -> list[str]:
+def _video_command(
+    plan: DownloadPlan,
+    cleanups: list[Callable[[], None]] | None = None,
+) -> list[str]:
     assert plan.video_format is not None
     command = _ffmpeg_base()
-    command += _ffmpeg_input(plan.video_format, plan.platform)
+    command += _ffmpeg_input(
+        plan.video_format,
+        plan.platform,
+        cleanups=cleanups,
+        content_type=plan.media_type,
+        label="video",
+    )
     if plan.audio_format is not None:
-        command += _ffmpeg_input(plan.audio_format, plan.platform)
+        audio_ext = str(plan.audio_format.get("ext") or "m4a")
+        command += _ffmpeg_input(
+            plan.audio_format,
+            plan.platform,
+            cleanups=cleanups,
+            content_type=audio_mime(audio_ext),
+            label="audio",
+        )
         command += ["-map", "0:v:0", "-map", "1:a:0"]
     elif plan.copy_audio_from_video:
         command += ["-map", "0:v:0", "-map", "0:a:0?"]
@@ -503,10 +572,20 @@ def _video_command(plan: DownloadPlan) -> list[str]:
     return command
 
 
-def _audio_command(plan: DownloadPlan, cover_path: str | None) -> list[str]:
+def _audio_command(
+    plan: DownloadPlan,
+    cover_path: str | None,
+    cleanups: list[Callable[[], None]] | None = None,
+) -> list[str]:
     assert plan.audio_format is not None
     command = _ffmpeg_base()
-    command += _ffmpeg_input(plan.audio_format, plan.platform)
+    command += _ffmpeg_input(
+        plan.audio_format,
+        plan.platform,
+        cleanups=cleanups,
+        content_type=plan.media_type,
+        label="audio",
+    )
     if cover_path:
         command += ["-i", cover_path, "-map", "0:a:0", "-map", "1:v:0", "-c:v", "copy"]
         command += ["-disposition:v", "attached_pic"]
@@ -579,6 +658,23 @@ class _TempCover:
             pass
 
 
+def _combine_cleanups(
+    cleanups: list[Callable[[], None]],
+) -> Callable[[], None] | None:
+    """Run every cleanup, newest first, never letting one failure stop the rest."""
+    if not cleanups:
+        return None
+
+    def run() -> None:
+        for cleanup in reversed(cleanups):
+            try:
+                cleanup()
+            except Exception:  # noqa: BLE001
+                logger.warning("Cleanup step failed", exc_info=True)
+
+    return run
+
+
 def prepare_stream(plan: DownloadPlan) -> PreparedStream:
     """Open the underlying stream. Blocking; call from a worker thread."""
     if plan.mode == "relay":
@@ -587,7 +683,20 @@ def prepare_stream(plan: DownloadPlan) -> PreparedStream:
         return RelayStream(plan.stream_url, plan.headers).open()
 
     if plan.mode == "video":
-        return FFmpegStream(_video_command(plan), label=f"video {plan.quality}").open()
+        cleanups: list[Callable[[], None]] = []
+        try:
+            command = _video_command(plan, cleanups)
+        except Exception:
+            cleanup = _combine_cleanups(cleanups)
+            if cleanup is not None:
+                cleanup()
+            raise
+        stream = FFmpegStream(
+            command,
+            label=f"video {plan.quality}",
+            cleanup=_combine_cleanups(cleanups),
+        )
+        return stream.open()
 
     if plan.mode == "audio":
         temp_cover: _TempCover | None = None
@@ -606,12 +715,25 @@ def prepare_stream(plan: DownloadPlan) -> PreparedStream:
         if plan.profile in ("mp3_320", "mp3_192") and plan.embed_tags and not prefix:
             prefix = id3.build_tag(plan.tags, None)
 
-        command = _audio_command(plan, temp_cover.path if temp_cover else None)
+        cleanups: list[Callable[[], None]] = []
+        if temp_cover is not None:
+            cleanups.append(temp_cover.cleanup)
+        try:
+            command = _audio_command(
+                plan,
+                temp_cover.path if temp_cover else None,
+                cleanups,
+            )
+        except Exception:
+            cleanup = _combine_cleanups(cleanups)
+            if cleanup is not None:
+                cleanup()
+            raise
         stream = FFmpegStream(
             command,
             prefix=prefix,
             label=f"audio {plan.profile}",
-            cleanup=temp_cover.cleanup if temp_cover else None,
+            cleanup=_combine_cleanups(cleanups),
         )
         return stream.open()
 

@@ -55,11 +55,12 @@ user.
 | Inline preview | Play the video in the page before downloading; a small progressive rendition is relayed to a native `<video>` player |
 | Android app | Standalone Kotlin app in `android/` with bundled yt-dlp + ffmpeg, inline ExoPlayer preview and MediaStore downloads |
 | Zero storage | Relay or ffmpeg pipe; no media cache and no app-managed downloads folder |
+| Fast high-res | Parallel-range accelerator feeds ffmpeg over up to 12 connections, staying in memory |
 | Resilient relay | Resumes truncated CDN connections with HTTP `Range` requests (bounded retries) |
 | Live progress | Elapsed time, bytes, percentage, speed, ETA and stall detection |
 | Local by default | Binds to `127.0.0.1`; no accounts, telemetry, analytics or cloud storage |
 | One-click start | Windows launcher and desktop-shortcut creator, with automatic dependency setup |
-| Offline tests | 108 tests with synthetic yt-dlp payloads and a fake HTTP origin |
+| Offline tests | 116 tests with synthetic yt-dlp payloads and a fake HTTP origin |
 
 ## Tech stack
 
@@ -138,6 +139,7 @@ flowchart LR
 | `core/ytdlp.py` | URL validation, extraction, metadata normalization, format catalogs, friendly errors |
 | `core/download.py` | `DownloadPlan`, `build_plan()`, `prepare_stream()`, tagging rules |
 | `core/streaming.py` | `RelayStream` (range resume) and `FFmpegStream` (pipe) |
+| `core/accelerator.py` | Parallel-range localhost proxy for high-resolution muxing |
 | `core/progress.py` | Thread-safe, bounded progress registry |
 | `core/cover.py` | Thumbnail download and JPEG normalization |
 | `core/id3.py` | Dependency-free ID3v2.3 writer for non-seekable MP3 pipes |
@@ -167,6 +169,7 @@ flowchart LR
 .
 ├── main.py                     # FastAPI application and routes
 ├── core/
+│   ├── accelerator.py          # Parallel-range download proxy
 │   ├── config.py               # Environment + binary discovery
 │   ├── cover.py                # Thumbnail → JPEG
 │   ├── download.py             # Plan building and execution
@@ -274,6 +277,11 @@ are optional; `python-dotenv` loads `.env` automatically at startup.
 | --- | --- | --- |
 | `MAX_VIDEO_HEIGHT` | `4320` | Highest video height offered, 144–4320. Set `2160` for 4K-only. |
 | `MAX_CONCURRENT_DOWNLOADS` | `4` | Simultaneous streams. Extra requests receive `429`. |
+| `PARALLEL_DOWNLOADS` | `true` | Fetch high-resolution streams over several connections. |
+| `PARALLEL_CONNECTIONS` | `12` | Range connections per stream (1-32). |
+| `PARALLEL_SEGMENT_MB` | `4` | Size of each ranged segment in MiB (1-32). |
+| `PARALLEL_WINDOW_MB` | `32` | In-memory look-ahead window per stream (8-512 MiB); at least one segment per connection |
+| `PARALLEL_MAX_CONNECTIONS` | `32` | Process-wide cap across every active stream (1-128). |
 | `INFO_CACHE_TTL` | `600` | Seconds a yt-dlp metadata result is reused. |
 | `INFO_CACHE_SIZE` | `64` | Maximum cached videos. |
 | `YTDLP_COOKIES_FILE` | — | Path to a Netscape `cookies.txt` for your own account. |
@@ -420,6 +428,11 @@ deleted immediately after the request.
 
 - A `threading.BoundedSemaphore` limits active downloads to
   `MAX_CONCURRENT_DOWNLOADS`; excess requests get HTTP `429`.
+- High-resolution muxing goes through `core/accelerator.py`: a pool of
+  `PARALLEL_CONNECTIONS` workers fetches 4 MiB `Range` segments into a
+  `PARALLEL_WINDOW_MB` memory window, and ffmpeg reads the result from a
+  token-guarded `127.0.0.1` URL. `PARALLEL_MAX_CONNECTIONS` caps the whole
+  process, and the proxy shuts down with the stream. Nothing touches the disk.
 - yt-dlp extraction runs in Starlette's threadpool so the event loop stays
   responsive.
 - Metadata is cached in a small thread-safe LRU-style cache with a TTL.
@@ -530,6 +543,7 @@ and pull-request checklist.
 | `Media link expired` | CDN URL TTL | Reload the preview and download again. |
 | Download stalls at 0% | ffmpeg preparing output | Wait for the first byte; the UI detects stalls. Try a lower quality if it persists. |
 | 429 response | Concurrency limit reached | Wait for a download to finish or raise `MAX_CONCURRENT_DOWNLOADS`. |
+| 4K/8K download slower than expected | CDN per-connection throttle | Keep `PARALLEL_DOWNLOADS=true` and raise `PARALLEL_CONNECTIONS` (up to 32). |
 | Instagram/Facebook public post fails | Extractor or IP blocking | Update yt-dlp; retry later; a proxy may help. |
 | Progress jumps back to "check your downloads" | Instance restarted or token expired | The download may still complete in the browser; check your downloads folder. |
 | Antivirus flags the launcher | Unsigned PowerShell script | Allow the script for this folder; it only starts the local app. |

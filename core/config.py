@@ -35,6 +35,13 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = (os.getenv(name) or "").strip().lower()
+    if not raw:
+        return default
+    return raw not in ("0", "false", "no", "off")
+
+
 def _cookies_from_env() -> str | None:
     """Resolve the yt-dlp cookie file path from the environment.
 
@@ -62,6 +69,16 @@ MAX_CONCURRENT_DOWNLOADS = max(1, _env_int("MAX_CONCURRENT_DOWNLOADS", 4))
 # yt-dlp metadata cache (avoids re-extracting between preview and download).
 INFO_CACHE_TTL = max(30, _env_int("INFO_CACHE_TTL", 600))
 INFO_CACHE_SIZE = max(8, _env_int("INFO_CACHE_SIZE", 64))
+
+# Parallel-range accelerator. CDNs throttle a single connection, so 4K/8K
+# streams are fetched over several connections into a bounded memory window
+# and handed to ffmpeg through a localhost URL. Nothing is written to disk.
+PARALLEL_ENABLED = _env_bool("PARALLEL_DOWNLOADS", True)
+PARALLEL_CONNECTIONS = max(1, min(_env_int("PARALLEL_CONNECTIONS", 12), 32))
+PARALLEL_SEGMENT_MB = max(1, min(_env_int("PARALLEL_SEGMENT_MB", 4), 32))
+PARALLEL_WINDOW_MB = max(8, min(_env_int("PARALLEL_WINDOW_MB", 32), 512))
+# Hard cap shared by every active accelerator in the process.
+PARALLEL_MAX_CONNECTIONS = max(1, min(_env_int("PARALLEL_MAX_CONNECTIONS", 32), 128))
 
 # Optional yt-dlp extras (age-restricted videos, geo blocks, proxies).
 COOKIES_FILE = _cookies_from_env()
@@ -91,6 +108,9 @@ def summary() -> dict:
         "ffmpeg_available": FFMPEG_OK,
         "max_height": MAX_VIDEO_HEIGHT,
         "max_concurrent_downloads": MAX_CONCURRENT_DOWNLOADS,
+        "parallel_downloads": PARALLEL_ENABLED,
+        "parallel_connections": PARALLEL_CONNECTIONS,
+        "parallel_max_connections": PARALLEL_MAX_CONNECTIONS,
         "cookies_configured": bool(COOKIES_FILE),
         "proxy_configured": bool(PROXY),
     }
