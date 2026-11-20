@@ -43,7 +43,8 @@ class PlaylistTest {
           "uploader": "Someone",
           "entries": [
             {"id": "a1", "title": "First", "duration": 61, "url": "a1",
-             "webpage_url": "https://www.youtube.com/watch?v=a1"},
+             "webpage_url": "https://www.youtube.com/watch?v=a1",
+             "thumbnail": "https://i.ytimg.com/vi/a1/hqdefault.jpg"},
             {"id": "a2", "title": "Second", "duration": 3725, "url": "a2",
              "webpage_url": "https://www.youtube.com/watch?v=a2"},
             {"id": "a3", "title": "Third", "url": "a3"}
@@ -75,6 +76,14 @@ class PlaylistTest {
         assertEquals("First", listing?.entries?.first()?.title)
         assertEquals("https://www.youtube.com/watch?v=a1", listing?.entries?.first()?.url)
         assertEquals("1:01", listing?.entries?.first()?.durationLabel)
+        assertEquals(
+            "https://i.ytimg.com/vi/a1/maxresdefault.jpg",
+            listing?.entries?.first()?.coverCandidates?.first(),
+        )
+        assertTrue(
+            listing?.entries?.first()?.coverCandidates.orEmpty()
+                .contains("https://i.ytimg.com/vi/a1/hqdefault.jpg"),
+        )
         assertEquals("1:02:05", listing?.entries?.get(1)?.durationLabel)
         assertEquals("https://www.youtube.com/watch?v=a3", listing?.entries?.last()?.url)
         assertFalse(listing!!.truncated)
@@ -128,7 +137,8 @@ class PlaylistTest {
               "title": "Mixed",
               "entries": [
                 {"id": "1", "title": "No link"},
-                {"id": "2", "title": "Has link", "webpage_url": "https://example.com/v/2"},
+                {"id": "2", "title": "Has link", "webpage_url": "https://example.com/v/2",
+                 "thumbnail": "https://cdn.example/2.jpg"},
                 null
               ]
             }

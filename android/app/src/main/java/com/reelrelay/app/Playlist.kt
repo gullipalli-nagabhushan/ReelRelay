@@ -10,6 +10,8 @@ data class PlaylistEntry(
     val url: String,
     val title: String,
     val durationLabel: String = "",
+    /** Thumbnail URLs used when tagging audio downloaded from this entry. */
+    val coverCandidates: List<String> = emptyList(),
 )
 
 /** A flat playlist listing, capped so a huge channel list stays manageable. */
@@ -144,8 +146,47 @@ private fun entry(node: JsonNode, host: String): PlaylistEntry? {
         url = url,
         title = title,
         durationLabel = clock(node.path("duration").asInt(0)),
+        coverCandidates = coverCandidates(node, host, url),
     )
 }
+
+/** Cover URLs for one flat-playlist entry, highest quality first. */
+private fun coverCandidates(node: JsonNode, host: String, pageUrl: String): List<String> {
+    val urls = LinkedHashSet<String>()
+    if (isYouTubeHost(host)) {
+        val id = youtubeVideoId(pageUrl)
+            ?: node.path("id").asText("").takeIf { it.isNotBlank() }
+        if (id != null) {
+            urls += "https://i.ytimg.com/vi/$id/maxresdefault.jpg"
+            urls += "https://i.ytimg.com/vi/$id/sddefault.jpg"
+            urls += "https://i.ytimg.com/vi/$id/hqdefault.jpg"
+        }
+    }
+    node.path("thumbnails").forEach { thumbnail ->
+        thumbnail.path("url").asText("").takeIf { it.isNotBlank() }?.let(urls::add)
+    }
+    node.path("thumbnail").asText("").takeIf { it.isNotBlank() }?.let(urls::add)
+    return urls.toList()
+}
+
+private fun youtubeVideoId(url: String): String? = runCatching {
+    val uri = URI(url)
+    val queryId = uri.rawQuery.orEmpty()
+        .split('&')
+        .firstOrNull { it.substringBefore('=') == "v" }
+        ?.substringAfter('=', "")
+        ?.takeIf { it.isNotBlank() }
+    if (queryId != null) return@runCatching queryId
+
+    val parts = uri.path.orEmpty().split('/').filter { it.isNotBlank() }
+    if (uri.host.orEmpty().contains("youtu.be")) {
+        parts.firstOrNull()
+    } else if (parts.size >= 2 && parts[0] in setOf("shorts", "embed", "live", "v")) {
+        parts[1]
+    } else {
+        null
+    }
+}.getOrNull()
 
 private fun isYouTubeHost(host: String): Boolean {
     val value = host.lowercase(Locale.US)

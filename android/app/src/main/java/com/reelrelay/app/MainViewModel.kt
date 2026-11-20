@@ -346,6 +346,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     title = entry.title,
                     artist = listing.uploader,
                     sourceUrl = entry.url,
+                    coverCandidates = entry.coverCandidates,
                 )
                 val file = withContext(Dispatchers.IO) {
                     repository.download(
