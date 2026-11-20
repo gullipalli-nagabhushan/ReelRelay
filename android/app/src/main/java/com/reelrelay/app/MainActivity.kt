@@ -159,7 +159,18 @@ class MainActivity : AppCompatActivity() {
             binding.metaText.isVisible = info.durationLabel.isNotBlank()
             binding.thumbnail.load(info.thumbnail)
 
-            if (info.preview != lastPreview) {
+            val playlist = state.playlist
+            binding.playlistText.isVisible = playlist != null
+            if (playlist != null) {
+                binding.playlistText.text = playlistPreview(playlist)
+            }
+
+            if (playlist != null) {
+                lastPreview = null
+                releasePlayer()
+                binding.playerView.isVisible = false
+                binding.previewUnavailable.isVisible = false
+            } else if (info.preview != lastPreview) {
                 lastPreview = info.preview
                 showPreview(info.preview)
             }
@@ -173,6 +184,9 @@ class MainActivity : AppCompatActivity() {
         updateChoices(state.choices, state.selectedIndex)
         binding.formatLayout.isVisible = state.choices.isNotEmpty()
         binding.downloadButton.isVisible = state.choices.isNotEmpty() && !state.downloading
+        binding.downloadButton.text = state.playlist?.let { listing ->
+            getString(R.string.playlist_download, listing.entries.size)
+        } ?: getString(R.string.download)
         binding.downloadProgress.isVisible = state.downloading
         binding.downloadProgress.isIndeterminate = state.indeterminate
         binding.downloadProgress.progress = state.progress
@@ -198,6 +212,17 @@ class MainActivity : AppCompatActivity() {
         val choice = choices.getOrNull(selected) ?: return
         if (binding.formatInput.text?.toString() != choice.displayTitle()) {
             binding.formatInput.setText(choice.displayTitle(), false)
+        }
+    }
+
+    private fun playlistPreview(listing: PlaylistListing): String {
+        val shown = listing.entries.take(5).mapIndexed { index, entry ->
+            "${index + 1}. ${entry.title}"
+        }
+        return buildString {
+            append(shown.joinToString("\n"))
+            val rest = listing.entries.size - shown.size
+            if (rest > 0) append("\n…and $rest more")
         }
     }
 

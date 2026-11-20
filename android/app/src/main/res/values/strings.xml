@@ -2,9 +2,10 @@
 <resources>
     <string name="app_name">ReelRelay</string>
     <string name="tagline">Download video and audio on your phone. No PC needed.</string>
-    <string name="url_hint">Paste a YouTube, Instagram or Facebook link</string>
+    <string name="url_hint">Paste a video, Short, Reel or playlist link</string>
     <string name="preview">Preview</string>
     <string name="download">Download</string>
+    <string name="playlist_download">Download all %1$d</string>
     <string name="cancel">Cancel download</string>
     <string name="format_hint">Choose a format</string>
     <string name="empty_url">Paste a link first.</string>

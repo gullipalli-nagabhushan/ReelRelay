@@ -17,6 +17,11 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Cookie import in the Android app: pick a browser-exported `cookies.txt` and it
   is copied into private storage and passed to yt-dlp, which unlocks
   login-only Instagram Reels and Facebook videos.
+- YouTube playlist downloads in the Android app. A playlist link is listed
+  without downloading, briefly probed for its real heights, and then every
+  entry is fetched one by one with the chosen video quality or audio profile.
+  Failed entries are skipped and reported, the download button shows the queue
+  size, and the first 100 videos are queued.
 - Platform `Origin`, `Referer`, `Accept-Language` and `Cookie` headers are sent
   for direct Instagram/Facebook CDN downloads, matching the desktop app.
 - Human-readable Android errors for private posts, login requirements, rate

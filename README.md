@@ -460,6 +460,12 @@ extraction, merging and audio conversion all run on the phone.
   private storage and passes it to yt-dlp for both extraction and download.
   Failures caused by login requirements, rate limits or region locks are
   explained in plain language instead of a raw yt-dlp traceback.
+- Paste a YouTube playlist link (including `watch?v=…&list=…`) to queue it. The
+  first few entries are probed to offer the heights the playlist really has,
+  then one video quality or audio profile is applied to every entry. Files
+  download one at a time — extraction, muxing and audio conversion never run
+  concurrently — and a failing entry is skipped and reported while the rest
+  continue. The first 100 videos of a playlist are queued.
 - High-resolution tracks are fetched over 12 parallel `Range` connections, the
   same trick the desktop app uses, then remuxed on the phone by the bundled
   ffmpeg. If a stream cannot be split, yt-dlp handles it automatically.

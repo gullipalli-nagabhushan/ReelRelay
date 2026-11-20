@@ -32,8 +32,16 @@ data class FormatChoice(
     val video: DownloadSource? = null,
     val audio: DownloadSource? = null,
     val recommended: Boolean = false,
+    /** Display height for video rows, `0` for audio. */
+    val height: Int = 0,
 ) {
     fun selectionLabel(): String = if (recommended) "★ $label" else label
+
+    /**
+     * `AutoCompleteTextView` writes `toString()` back into the field after a
+     * tap, so it must be the readable title rather than the data-class dump.
+     */
+    override fun toString(): String = selectionLabel()
 }
 
 /** Everything the preview card needs, already flattened for the UI. */
@@ -128,7 +136,7 @@ private fun durationLabel(seconds: Int): String {
     }
 }
 
-private fun qualityName(height: Int): String = when (height) {
+internal fun qualityName(height: Int): String = when (height) {
     4320 -> "8K"
     2160 -> "4K"
     1440 -> "2K"
@@ -403,6 +411,7 @@ private fun buildVideoChoices(
                 mergeTo = container,
                 video = downloadSource(video, info, duration),
                 audio = downloadSource(audio, info, duration),
+                height = height,
             )
             madeForHeight++
         }
@@ -431,6 +440,7 @@ private fun buildVideoChoices(
             ),
             formatSelector = id,
             video = downloadSource(prog, info, duration),
+            height = height,
         )
     }
 

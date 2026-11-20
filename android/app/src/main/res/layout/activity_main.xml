@@ -189,6 +189,16 @@
                         android:textColor="@color/rr_muted"
                         android:textSize="12sp" />
 
+                    <TextView
+                        android:id="@+id/playlistText"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:lineSpacingExtra="2dp"
+                        android:textColor="@color/rr_text_soft"
+                        android:textSize="13sp"
+                        android:visibility="gone" />
+
                     <androidx.media3.ui.PlayerView
                         android:id="@+id/playerView"
                         android:layout_width="match_parent"

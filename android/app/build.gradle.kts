@@ -86,7 +86,10 @@ dependencies {
     implementation("io.github.junkfood02.youtubedl-android:library:0.18.1")
     implementation("io.github.junkfood02.youtubedl-android:ffmpeg:0.18.1")
 
+    // Already present at runtime through youtubedl-android; declaring it makes
+    // the playlist JSON parser compile against the same classes.
+    implementation("com.fasterxml.jackson.core:jackson-databind:2.17.2")
+
     testImplementation("junit:junit:4.13.2")
-    testImplementation("com.fasterxml.jackson.core:jackson-databind:2.17.2")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 }

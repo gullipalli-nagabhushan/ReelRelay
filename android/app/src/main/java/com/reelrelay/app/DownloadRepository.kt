@@ -58,6 +58,32 @@ class DownloadRepository(private val context: Context) {
         }
     }
 
+    /**
+     * Enumerates a playlist without downloading anything.
+     *
+     * `--flat-playlist` keeps this to a single network round trip per page of
+     * entries; `--dump-single-json` returns one JSON document we can parse
+     * eagerly. `null` means the link is not a readable playlist.
+     */
+    suspend fun listPlaylist(
+        url: String,
+        cookiesPath: String?,
+    ): PlaylistListing? = withContext(Dispatchers.IO) {
+        val request = YoutubeDLRequest(url).apply {
+            addOption("--flat-playlist")
+            // One JSON object per entry. `--dump-json` also lets the library
+            // tolerate a partially unavailable playlist, which `-J` cannot.
+            addOption("--dump-json")
+            addOption("--no-warnings")
+            addOption("--ignore-errors")
+            if (!cookiesPath.isNullOrBlank()) addOption("--cookies", cookiesPath)
+        }
+        // An empty id tells youtubedl-android to return output even when a few
+        // entries failed; the listing is still useful.
+        val response = YoutubeDL.getInstance().execute(request, "")
+        parsePlaylist(response.out, url)
+    }
+
     /** Original single-connection path, kept as the universal fallback. */
     private fun runYtDlp(
         url: String,
