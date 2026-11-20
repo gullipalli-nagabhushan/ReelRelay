@@ -45,6 +45,7 @@ class MainActivity : AppCompatActivity() {
     private var lastChoices: List<FormatChoice> = emptyList()
     private var lastError: String? = null
     private var lastDownloading = false
+    private var lastInfo: MediaSummary? = null
 
     private val storagePermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -163,7 +164,8 @@ class MainActivity : AppCompatActivity() {
 
         val info = state.info
         binding.mediaCard.isVisible = info != null
-        if (info != null) {
+        if (info != null && info !== lastInfo) {
+            lastInfo = info
             binding.titleText.text = info.title
             binding.uploaderText.text = info.uploader
             binding.uploaderText.isVisible = info.uploader.isNotBlank()
@@ -175,9 +177,6 @@ class MainActivity : AppCompatActivity() {
             binding.playlistText.isVisible = playlist != null
             if (playlist != null) {
                 binding.playlistText.text = playlistPreview(playlist)
-            }
-
-            if (playlist != null) {
                 lastPreview = null
                 releasePlayer()
                 binding.playerView.isVisible = false
@@ -186,7 +185,8 @@ class MainActivity : AppCompatActivity() {
                 lastPreview = info.preview
                 showPreview(info.preview)
             }
-        } else if (lastPreview != null) {
+        } else if (info == null && lastInfo != null) {
+            lastInfo = null
             lastPreview = null
             releasePlayer()
             binding.playerView.isVisible = false
