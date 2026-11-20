@@ -130,18 +130,10 @@ class DownloadRepository(private val context: Context) {
         val audioOnly = choice.extractAudioFormat != null ||
             (choice.video == null && choice.mergeTo == null && choice.height == 0)
         if (meta != null && audioOnly) {
+            // yt-dlp writes title/artist/source tags. Cover art is added by the
+            // bundled ffmpeg below, which handles every container consistently
+            // (yt-dlp's own embed needs mutagen or a working ffprobe path).
             request.addOption("--add-metadata")
-            // WAV, WebM/Opus and Ogg have no standard cover block; everything
-            // else gets the artwork.
-            val coverable = when (choice.extractAudioFormat) {
-                null -> choice.audio?.ext?.lowercase(Locale.US) !in setOf("webm", "opus", "ogg")
-                "wav" -> false
-                else -> true
-            }
-            if (coverable) {
-                request.addOption("--embed-thumbnail")
-                request.addOption("--convert-thumbnails", "jpg")
-            }
         }
 
         // yt-dlp sweeps 0→100 for every stream it fetches, which made the bar
@@ -175,7 +167,78 @@ class DownloadRepository(private val context: Context) {
         if (produced == null) {
             throw IllegalStateException("The download finished but no file was produced.")
         }
-        progress.report(97f, 0L, "Finishing ${produced.name}…")
+        val finished = if (meta != null && audioOnly) {
+            finalizeAudio(meta, workDir, produced, progress)
+        } else {
+            produced
+        }
+        progress.report(97f, 0L, "Finishing ${finished.name}…")
+        return finished
+    }
+
+    /**
+     * Adds our tags and cover art to an audio file yt-dlp produced.
+     *
+     * Everything is copied, never re-encoded, so the chosen quality is kept.
+     * A container or image the bundled ffmpeg cannot handle simply keeps the
+     * file yt-dlp wrote (which already has its metadata).
+     */
+    private suspend fun finalizeAudio(
+        meta: AudioMeta,
+        workDir: File,
+        produced: File,
+        progress: ProgressSink,
+    ): File {
+        val format = produced.extension.lowercase(Locale.US)
+        if (format !in TAGGED_CONTAINERS) return produced
+        progress.report(95f, 0L, "Adding tags and cover art…")
+
+        val tagged = File(workDir, "tagged.${produced.extension}")
+        var cover = if (format in COVER_CONTAINERS) {
+            CoverArt.fetchFor(context, meta, workDir, "tagged")
+        } else {
+            null
+        }
+        var embedded = false
+        try {
+            embedded = runCatching {
+                FfmpegRunner.convertAudio(
+                    context = context,
+                    source = produced,
+                    output = tagged,
+                    format = format,
+                    codec = null,
+                    copyAudio = true,
+                    tags = meta.tags(),
+                    cover = cover,
+                )
+            }.isSuccess
+            if (!embedded && cover != null) {
+                currentCoroutineContext().ensureActive()
+                tagged.delete()
+                embedded = runCatching {
+                    FfmpegRunner.convertAudio(
+                        context = context,
+                        source = produced,
+                        output = tagged,
+                        format = format,
+                        codec = null,
+                        copyAudio = true,
+                        tags = meta.tags(),
+                        cover = null,
+                    )
+                }.isSuccess
+            }
+        } finally {
+            cover?.delete()
+            cover = null
+        }
+
+        if (embedded && tagged.isFile && tagged.length() > 0L) {
+            produced.delete()
+            return tagged
+        }
+        tagged.delete()
         return produced
     }
 

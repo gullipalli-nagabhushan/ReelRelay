@@ -138,14 +138,7 @@ object ParallelDownload {
         meta: AudioMeta?,
         workDir: File,
         base: String,
-    ): File? {
-        val candidates = meta?.coverCandidates.orEmpty()
-        if (candidates.isEmpty()) return null
-        val destination = File(workDir, "$base.cover.jpg")
-        return runCatching {
-            CoverArt.fetch(context, candidates, meta?.sourceUrl.orEmpty(), destination)
-        }.getOrNull()
-    }
+    ): File? = CoverArt.fetchFor(context, meta, workDir, base)
 
     private suspend fun downloadStream(
         downloader: SegmentDownloader,

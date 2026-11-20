@@ -31,6 +31,20 @@ object CoverArt {
             .build()
     }
 
+    /** Convenience overload for an [AudioMeta] and a work-directory name. */
+    suspend fun fetchFor(
+        context: Context,
+        meta: AudioMeta?,
+        workDir: File,
+        baseName: String,
+    ): File? {
+        val candidates = meta?.coverCandidates.orEmpty()
+        if (candidates.isEmpty()) return null
+        return runCatching {
+            fetch(context, candidates, meta?.sourceUrl.orEmpty(), File(workDir, "$baseName.cover.jpg"))
+        }.getOrNull()
+    }
+
     suspend fun fetch(
         context: Context,
         candidates: List<String>,
