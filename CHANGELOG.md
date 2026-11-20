@@ -22,6 +22,11 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   entry is fetched one by one with the chosen video quality or audio profile.
   Failed entries are skipped and reported, the download button shows the queue
   size, and the first 100 videos are queued.
+- Audio tags and cover art in the Android app. Audio files now carry the video
+  title, the channel as artist/album artist, the source page as comment, and —
+  for MP3, M4A and FLAC — the thumbnail as embedded cover art, matching the
+  desktop app. WAV keeps the tags without a cover block, and a cover that cannot
+  be decoded never discards the audio.
 - Platform `Origin`, `Referer`, `Accept-Language` and `Cookie` headers are sent
   for direct Instagram/Facebook CDN downloads, matching the desktop app.
 - Human-readable Android errors for private posts, login requirements, rate
@@ -68,6 +73,12 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Fixed
 
+- Android progress no longer sweeps back and forth or completes several times
+  per video. A monotonic progress mapping treats separate video and audio
+  streams as slices of one bar, retries no longer subtract downloaded bytes from
+  the percentage, and a yt-dlp fallback resumes from where the accelerated
+  attempt stopped. The bar is determinate from the first frame, "Saving" is a
+  99% step, and the screen stays awake while downloading.
 - Instagram and Facebook downloads on Android: progressive files are now
   downloadable when a link has no separate audio stream, the audio profiles are
   extracted from the video track, and the CDN gets the `Referer`/`Origin`

@@ -185,6 +185,7 @@ fun buildPlaylistSummary(listing: PlaylistListing, sample: MediaSummary?): Media
         webpageUrl = listing.url,
         preview = null,
         choices = buildPlaylistChoices(sample),
+        coverCandidates = sample?.coverCandidates.orEmpty(),
     )
 }
 

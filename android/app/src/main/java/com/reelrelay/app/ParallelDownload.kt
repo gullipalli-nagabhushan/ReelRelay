@@ -19,6 +19,7 @@ object ParallelDownload {
         title: String,
         choice: FormatChoice,
         workDir: File,
+        meta: AudioMeta? = null,
         onProgress: (Float, Long, String) -> Unit,
     ): File? {
         val video = choice.video
@@ -32,7 +33,12 @@ object ParallelDownload {
         // Audio-only (or audio-from-progressive-video) source.
         if (video == null && audio != null) {
             val sourceLabel = if (choice.extractAudioFormat != null) "video" else "audio"
-            if (choice.extractAudioFormat == null) {
+            val targetFormat = (choice.extractAudioFormat
+                ?: audio.extensionOr("m4a")).lowercase(Locale.US)
+            val taggable = meta != null && targetFormat in TAGGED_CONTAINERS
+
+            // Keep the original stream untouched when no tags can be written.
+            if (choice.extractAudioFormat == null && !taggable) {
                 val target = File(workDir, "$base.${audio.extensionOr("m4a")}")
                 downloadStream(downloader, audio, target, onProgress, "audio", 0f, 99f)
                 onProgress(100f, 0L, "Saved ${target.name}")
@@ -40,20 +46,29 @@ object ParallelDownload {
             }
 
             val source = File(workDir, "$base.source.${audio.extensionOr("m4a")}")
-            downloadStream(downloader, audio, source, onProgress, sourceLabel, 0f, 88f)
-            return try {
-                val target = File(workDir, "$base.${choice.extractAudioFormat}")
-                onProgress(90f, 0L, "Converting to ${choice.extractAudioFormat.uppercase(Locale.US)}…")
-                FfmpegRunner.convertAudio(
-                    context = context,
-                    source = source,
-                    output = target,
-                    format = choice.extractAudioFormat,
-                    codec = audio.codec,
-                    bitrate = choice.extractAudioBitrate,
-                )
+            downloadStream(downloader, audio, source, onProgress, sourceLabel, 0f, 86f)
+            try {
+                val target = File(workDir, "$base.$targetFormat")
+                onProgress(88f, 0L, "Adding tags and cover art…")
+                val cover = if (targetFormat in COVER_CONTAINERS) {
+                    fetchCover(context, meta, workDir, base)
+                } else {
+                    null
+                }
+                val tags = meta?.tags().orEmpty()
+                try {
+                    embed(context, source, target, targetFormat, audio.codec, choice, tags, cover)
+                } catch (t: Throwable) {
+                    if (cover == null) throw t
+                    // A corrupt or unsupported image must not lose the audio.
+                    target.delete()
+                    onProgress(92f, 0L, "Cover art could not be embedded — keeping the tags…")
+                    embed(context, source, target, targetFormat, audio.codec, choice, tags, null)
+                } finally {
+                    cover?.delete()
+                }
                 onProgress(100f, 0L, "Saved ${target.name}")
-                target
+                return target
             } finally {
                 source.delete()
             }
@@ -95,6 +110,43 @@ object ParallelDownload {
         }
     }
 
+    private suspend fun embed(
+        context: Context,
+        source: File,
+        target: File,
+        format: String,
+        codec: String?,
+        choice: FormatChoice,
+        tags: Map<String, String>,
+        cover: File?,
+    ) {
+        FfmpegRunner.convertAudio(
+            context = context,
+            source = source,
+            output = target,
+            format = format,
+            codec = codec,
+            bitrate = choice.extractAudioBitrate,
+            copyAudio = choice.extractAudioFormat == null,
+            tags = tags,
+            cover = cover,
+        )
+    }
+
+    private suspend fun fetchCover(
+        context: Context,
+        meta: AudioMeta?,
+        workDir: File,
+        base: String,
+    ): File? {
+        val candidates = meta?.coverCandidates.orEmpty()
+        if (candidates.isEmpty()) return null
+        val destination = File(workDir, "$base.cover.jpg")
+        return runCatching {
+            CoverArt.fetch(context, candidates, meta?.sourceUrl.orEmpty(), destination)
+        }.getOrNull()
+    }
+
     private suspend fun downloadStream(
         downloader: SegmentDownloader,
         source: DownloadSource,
@@ -105,6 +157,7 @@ object ParallelDownload {
         toPercent: Float,
     ) {
         val started = System.currentTimeMillis()
+        var lastPercent = fromPercent
         downloader.download(
             url = source.url,
             headers = source.headers,
@@ -113,6 +166,8 @@ object ParallelDownload {
         ) { done, total ->
             val fraction = if (total > 0L) done.toDouble() / total else 1.0
             val percent = fromPercent + ((toPercent - fromPercent) * fraction).toFloat()
+            // Retries subtract already counted bytes, so hold the high-water mark.
+            lastPercent = maxOf(lastPercent, percent.coerceIn(0f, 100f))
             val seconds = (System.currentTimeMillis() - started) / 1000.0
             val speed = if (seconds >= 0.5) done / seconds else 0.0
             val eta = if (speed > 0.0 && total > done) ((total - done) / speed).toLong() else 0L
@@ -122,7 +177,7 @@ object ParallelDownload {
                 val rate = formatSpeed(speed)
                 if (rate.isNotEmpty()) append(" · ").append(rate)
             }
-            onProgress(percent.coerceIn(0f, 100f), eta, detail)
+            onProgress(lastPercent, eta, detail)
         }
     }
 }

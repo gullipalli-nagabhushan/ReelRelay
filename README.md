@@ -466,9 +466,18 @@ extraction, merging and audio conversion all run on the phone.
   download one at a time — extraction, muxing and audio conversion never run
   concurrently — and a failing entry is skipped and reported while the rest
   continue. The first 100 videos of a playlist are queued.
+- Audio profiles are tagged like the desktop app: title, channel as
+  artist/album artist and the source page as comment. MP3, M4A and FLAC also get
+  the video thumbnail as embedded cover art (WAV keeps the tags but has no cover
+  block). Cover embedding is best-effort — if the artwork cannot be decoded the
+  audio is still written with its tags.
 - High-resolution tracks are fetched over 12 parallel `Range` connections, the
   same trick the desktop app uses, then remuxed on the phone by the bundled
   ffmpeg. If a stream cannot be split, yt-dlp handles it automatically.
+- One monotonic progress bar spans the whole job: parallel segments, yt-dlp
+  fallback, separate video and audio tracks, cover embedding and the final
+  save. It never walks backwards or fills once per track, and the screen stays
+  awake while a download runs.
 - Finished files are published through MediaStore to `Downloads/ReelRelay`
   (MediaStore on Android 10+, public Downloads plus a permission prompt below
   that).

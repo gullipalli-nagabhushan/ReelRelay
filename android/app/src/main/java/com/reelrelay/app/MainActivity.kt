@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.ArrayAdapter
@@ -16,6 +17,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -41,6 +44,7 @@ class MainActivity : AppCompatActivity() {
     private var lastPreview: PreviewSource? = null
     private var lastChoices: List<FormatChoice> = emptyList()
     private var lastError: String? = null
+    private var lastDownloading = false
 
     private val storagePermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -62,6 +66,14 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+
+        // Draw edge-to-edge on modern Android without letting content sit under
+        // the status or navigation bars.
+        ViewCompat.setOnApplyWindowInsetsListener(binding.root) { view, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            insets
+        }
 
         binding.previewButton.setOnClickListener { submit() }
         binding.downloadButton.setOnClickListener { onDownloadClicked() }
@@ -187,13 +199,26 @@ class MainActivity : AppCompatActivity() {
         binding.downloadButton.text = state.playlist?.let { listing ->
             getString(R.string.playlist_download, listing.entries.size)
         } ?: getString(R.string.download)
-        binding.downloadProgress.isVisible = state.downloading
+        val showProgress = state.downloading || state.progress >= 100
+        binding.downloadProgress.isVisible = showProgress
         binding.downloadProgress.isIndeterminate = state.indeterminate
-        binding.downloadProgress.progress = state.progress
+        binding.downloadProgress.setProgressCompat(state.progress, true)
+        binding.progressPercent.isVisible = showProgress
+        binding.progressPercent.text = "${state.progress}%"
         binding.statusText.text = state.status
         binding.statusText.isVisible = state.status.isNotBlank()
         binding.cancelButton.isVisible = state.downloading
         binding.urlLayout.isEnabled = !state.downloading
+
+        if (state.downloading != lastDownloading) {
+            lastDownloading = state.downloading
+            if (state.downloading) {
+                window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                binding.downloadProgress.post { scrollToProgress() }
+            } else {
+                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+        }
 
         val error = state.error
         if (error == null) {
@@ -202,6 +227,17 @@ class MainActivity : AppCompatActivity() {
             lastError = error
             Snackbar.make(binding.root, error, Snackbar.LENGTH_LONG).show()
         }
+    }
+
+    /** Brings the progress bar into view the moment a download starts. */
+    private fun scrollToProgress() {
+        var offset = 0
+        var view: View? = binding.downloadProgress
+        while (view != null && view !== binding.root) {
+            offset += view.top
+            view = view.parent as? View
+        }
+        binding.root.smoothScrollTo(0, (offset - 24).coerceAtLeast(0))
     }
 
     private fun updateChoices(choices: List<FormatChoice>, selected: Int) {

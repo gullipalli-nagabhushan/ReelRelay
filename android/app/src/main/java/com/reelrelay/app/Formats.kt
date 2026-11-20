@@ -53,7 +53,47 @@ data class MediaSummary(
     val webpageUrl: String,
     val preview: PreviewSource?,
     val choices: List<FormatChoice>,
-)
+    /** Cover-art candidates, best (JPEG) first, used when tagging audio. */
+    val coverCandidates: List<String> = emptyList(),
+) {
+    val coverUrl: String? get() = coverCandidates.firstOrNull()
+
+    /** Tags the downloader writes into an audio file for this media. */
+    fun audioMeta(): AudioMeta = AudioMeta(
+        title = title,
+        artist = uploader,
+        sourceUrl = webpageUrl,
+        coverCandidates = coverCandidates,
+    )
+}
+
+/**
+ * Everything written into an audio file, mirroring the desktop app: the video
+ * title, the channel as artist/album artist and the source page as comment.
+ */
+data class AudioMeta(
+    val title: String,
+    val artist: String,
+    val sourceUrl: String,
+    val coverCandidates: List<String> = emptyList(),
+) {
+    val coverUrl: String? get() = coverCandidates.firstOrNull()
+
+    /** Filled-in, sanitised metadata; blank values are omitted. */
+    fun tags(): Map<String, String> {
+        val albumArtist = cleanTag(artist)
+        return linkedMapOf(
+            "title" to cleanTag(title),
+            "artist" to albumArtist,
+            "album_artist" to albumArtist,
+            "comment" to cleanTag("Source: $sourceUrl", 300),
+            "encoder" to "ReelRelay",
+        ).filterValues { it.isNotBlank() }
+    }
+}
+
+internal fun cleanTag(value: String, limit: Int = 240): String =
+    value.replace(Regex("\\s+"), " ").trim().take(limit)
 
 /** A progressive stream the phone can play directly with ExoPlayer. */
 data class PreviewSource(
@@ -63,7 +103,7 @@ data class PreviewSource(
 )
 
 private val PLAYABLE_EXTENSIONS = setOf("mp4", "m4v", "webm", "mov")
-private val DEFAULT_USER_AGENT =
+internal val DEFAULT_USER_AGENT =
     "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 " +
         "(KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
 
@@ -274,6 +314,28 @@ private fun platformOf(info: VideoInfo): String? {
 }
 
 /**
+ * Cover-art URLs, highest quality first.
+ *
+ * YouTube thumbnails are well known, so the large JPEGs are tried before the
+ * extractor's own list, which often points at `.webp`. [CoverArt] falls back to
+ * the remaining candidates when one 404s.
+ */
+internal fun coverCandidates(info: VideoInfo): List<String> {
+    val urls = LinkedHashSet<String>()
+    val id = info.id.orEmpty()
+    if (platformOf(info) == "youtube" && id.isNotBlank()) {
+        urls += "https://i.ytimg.com/vi/$id/maxresdefault.jpg"
+        urls += "https://i.ytimg.com/vi/$id/sddefault.jpg"
+        urls += "https://i.ytimg.com/vi/$id/hqdefault.jpg"
+    }
+    info.thumbnails.orEmpty().forEach { thumbnail ->
+        thumbnail.url?.takeIf { it.isNotBlank() }?.let(urls::add)
+    }
+    info.thumbnail?.takeIf { it.isNotBlank() }?.let(urls::add)
+    return urls.toList()
+}
+
+/**
  * A direct source for the parallel downloader, or `null` when yt-dlp must
  * handle the stream (manifests, missing URLs, unknown sizes).
  */
@@ -356,6 +418,7 @@ fun buildSummary(info: VideoInfo): MediaSummary {
         webpageUrl = info.webpageUrl ?: "",
         preview = preview,
         choices = orderedVideo + audioChoices,
+        coverCandidates = coverCandidates(info),
     )
 }
 

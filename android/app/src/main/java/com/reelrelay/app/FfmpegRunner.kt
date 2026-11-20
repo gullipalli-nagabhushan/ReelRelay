@@ -37,11 +37,13 @@ object FfmpegRunner {
     }
 
     /**
-     * Converts the audio track of [source] to [format].
+     * Converts the audio track of [source] to [format] and writes [tags].
      *
-     * [bitrate] is in kbps and ignored for lossless targets. When the source
-     * already is the requested format and [copyWhenPossible] is set no
-     * re-encoding happens, which keeps e.g. AAC 256 kbps untouched.
+     * [cover] is attached as a front-cover picture for the containers that
+     * support one (MP3, M4A, FLAC); WAV gets tags but no artwork. [bitrate] is
+     * in kbps and ignored for lossless targets. When the source already is the
+     * requested format and [copyWhenPossible] is set no re-encoding happens,
+     * which keeps e.g. AAC 256 kbps untouched.
      */
     suspend fun convertAudio(
         context: Context,
@@ -51,22 +53,65 @@ object FfmpegRunner {
         codec: String?,
         bitrate: Int = 0,
         copyWhenPossible: Boolean = true,
+        copyAudio: Boolean = false,
+        tags: Map<String, String> = emptyMap(),
+        cover: File? = null,
     ) {
         val target = format.lowercase()
-        val args = mutableListOf("-y", "-i", source.absolutePath, "-vn")
-        when (target) {
-            "mp3" -> args += listOf("-c:a", "libmp3lame") + bitrateArg(bitrate, 320)
+        val attachCover = cover != null && target in COVER_CONTAINERS
+
+        val args = mutableListOf("-y", "-i", source.absolutePath)
+        if (attachCover) {
+            args += listOf("-i", cover!!.absolutePath, "-map", "0:a:0", "-map", "1:v:0")
+            args += listOf("-c:v", "mjpeg", "-disposition:v", "attached_pic")
+        } else {
+            args += listOf("-map", "0:a:0")
+        }
+
+        if (copyAudio) {
+            args += listOf("-c:a", "copy")
+        } else when (target) {
+            "mp3" -> {
+                args += listOf("-c:a", "libmp3lame") + bitrateArg(bitrate, 320)
+            }
             "m4a" -> if (copyWhenPossible && codec?.startsWith("mp4a") == true) {
                 args += listOf("-c:a", "copy")
             } else {
                 args += listOf("-c:a", "aac") + bitrateArg(bitrate, 256)
             }
-            "flac" -> args += listOf("-c:a", "flac")
+            "flac" -> args += listOf("-c:a", "flac", "-compression_level", "5")
             "wav" -> args += listOf("-c:a", "pcm_s16le")
             else -> throw ParallelUnavailable("Unsupported audio format: $format")
         }
+        if (target == "mp3") args += listOf("-id3v2_version", "3", "-write_id3v1", "0")
+
+        // Replace any metadata inherited from the source stream with ours.
+        args += listOf("-map_metadata", "-1")
+        if (target in TAGGED_CONTAINERS) {
+            for ((key, value) in tags) {
+                val cleaned = cleanTag(value)
+                if (cleaned.isNotEmpty()) args += listOf("-metadata", "$key=$cleaned")
+            }
+        }
+        if (target == "m4a") args += listOf("-movflags", "+faststart")
         args += output.absolutePath
         run(context, args)
+    }
+
+    /** Decodes any image the bundled ffmpeg understands into a JPEG file. */
+    suspend fun toJpeg(context: Context, source: File, output: File) {
+        run(
+            context,
+            listOf(
+                "-y",
+                "-i", source.absolutePath,
+                "-frames:v", "1",
+                "-c:v", "mjpeg",
+                "-q:v", "2",
+                "-f", "image2",
+                output.absolutePath,
+            ),
+        )
     }
 
     private fun bitrateArg(bitrate: Int, fallback: Int): List<String> =
@@ -137,6 +182,12 @@ internal const val FFMPEG_LIB_DIR = "youtubedl-android/packages/ffmpeg/usr/lib"
 
 /** Containers that accept the MP4 streaming hint. */
 internal val MP4_CONTAINERS = setOf("mp4", "m4v", "mov")
+
+/** Audio containers ffmpeg can embed a cover picture into. */
+internal val COVER_CONTAINERS = setOf("mp3", "m4a", "flac")
+
+/** Audio containers that store text tags reliably. */
+internal val TAGGED_CONTAINERS = setOf("mp3", "m4a", "flac", "wav")
 
 /**
  * `LD_LIBRARY_PATH` for the bundled ffmpeg.

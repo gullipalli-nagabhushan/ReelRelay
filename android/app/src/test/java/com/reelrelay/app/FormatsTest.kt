@@ -246,6 +246,84 @@ class FormatsTest {
     }
 
     @Test
+    fun `audio metadata carries the desktop tags`() {
+        val meta = summary().audioMeta()
+
+        assertEquals("Test video", meta.title)
+        assertEquals("Someone", meta.artist)
+        assertEquals("https://youtu.be/abc123", meta.sourceUrl)
+        assertEquals(
+            mapOf(
+                "title" to "Test video",
+                "artist" to "Someone",
+                "album_artist" to "Someone",
+                "comment" to "Source: https://youtu.be/abc123",
+                "encoder" to "ReelRelay",
+            ),
+            meta.tags(),
+        )
+    }
+
+    @Test
+    fun `audio tags drop blank values and flatten whitespace`() {
+        val meta = AudioMeta(
+            title = "  Line one\n\nLine two  ",
+            artist = "   ",
+            sourceUrl = "https://example.com/v/1",
+        )
+
+        assertEquals("Line one Line two", meta.tags()["title"])
+        assertFalse(meta.tags().containsKey("artist"))
+        assertFalse(meta.tags().containsKey("album_artist"))
+        assertEquals("Source: https://example.com/v/1", meta.tags()["comment"])
+    }
+
+    @Test
+    fun `youtube cover candidates prefer the large jpeg`() {
+        val json = """
+            {
+              "id": "abc123",
+              "title": "Cover",
+              "webpage_url": "https://www.youtube.com/watch?v=abc123",
+              "extractor": "youtube",
+              "thumbnail": "https://i.ytimg.com/vi/abc123/hqdefault.webp",
+              "formats": [
+                {"format_id": "18", "ext": "mp4", "vcodec": "avc1", "acodec": "mp4a",
+                 "width": 640, "height": 360, "tbr": 700, "url": "https://m/18.mp4"}
+              ]
+            }
+        """.trimIndent()
+
+        val summary = summary(json)
+
+        assertEquals("https://i.ytimg.com/vi/abc123/maxresdefault.jpg", summary.coverUrl)
+        assertEquals("https://i.ytimg.com/vi/abc123/maxresdefault.jpg", summary.audioMeta().coverUrl)
+        assertTrue(summary.coverCandidates.contains("https://i.ytimg.com/vi/abc123/sddefault.jpg"))
+        assertEquals("https://i.ytimg.com/vi/abc123/hqdefault.webp", summary.coverCandidates.last())
+    }
+
+    @Test
+    fun `non-youtube cover candidates use the extractor thumbnail`() {
+        val summary = summary(
+            """
+                {
+                  "id": "ABC",
+                  "title": "Reel",
+                  "webpage_url": "https://www.instagram.com/reel/ABC/",
+                  "extractor": "instagram",
+                  "thumbnail": "https://scontent.example/cover.jpg",
+                  "formats": [
+                    {"format_id": "1", "ext": "mp4", "vcodec": "avc1", "acodec": "mp4a",
+                     "width": 720, "height": 1280, "tbr": 1800, "url": "https://scontent.example/reel.mp4"}
+                  ]
+                }
+            """.trimIndent(),
+        )
+
+        assertEquals(listOf("https://scontent.example/cover.jpg"), summary.coverCandidates)
+    }
+
+    @Test
     fun `friendly errors explain login-locked posts`() {
         val login = friendlyError("ERROR: [Instagram] ABC: Login required", hasCookies = false)
         assertTrue(login!!.contains("logged-in"))

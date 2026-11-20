@@ -78,6 +78,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     playlist = null,
                     status = "",
                     savedName = null,
+                    progress = 0,
+                    indeterminate = false,
                 )
             }
             try {
@@ -229,7 +231,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 it.copy(
                     downloading = true,
                     progress = 0,
-                    indeterminate = true,
+                    // Determinate from the first frame: an indeterminate bar
+                    // restarting its animation looked like a second download.
+                    indeterminate = false,
                     status = string(R.string.downloading),
                     error = null,
                     savedName = null,
@@ -240,7 +244,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (playlist != null) {
                     downloadPlaylist(playlist, choice, processId)
                 } else {
-                    downloadSingle(url, info.title, choice, processId)
+                    downloadSingle(url, info.title, choice, processId, info.audioMeta())
                 }
             } catch (cancel: CancellationException) {
                 throw cancel
@@ -260,12 +264,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private suspend fun downloadSingle(url: String, title: String, choice: FormatChoice, processId: String) {
+    private suspend fun downloadSingle(
+        url: String,
+        title: String,
+        choice: FormatChoice,
+        processId: String,
+        meta: AudioMeta?,
+    ) {
         var produced: File? = null
         try {
             val cookies = cookiesPath()
             val file = withContext(Dispatchers.IO) {
-                repository.download(url, title, choice, processId, cookies) { progress, eta, line ->
+                repository.download(url, title, choice, processId, cookies, meta) { progress, eta, line ->
                     _state.update {
                         it.copy(
                             progress = progress.coerceIn(0f, 100f).toInt(),
@@ -276,7 +286,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             produced = file
-            _state.update { it.copy(indeterminate = true, status = "Saving to Downloads/ReelRelay…") }
+            _state.update {
+                it.copy(
+                    progress = 99,
+                    indeterminate = false,
+                    status = "Saving to Downloads/ReelRelay…",
+                )
+            }
             val uri = withContext(Dispatchers.IO) { MediaPublisher.publish(app, file) }
             _state.update {
                 it.copy(
@@ -309,28 +325,44 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val total = listing.entries.size
         val cookies = cookiesPath()
         var saved = 0
+        var overall = 0
         val failed = mutableListOf<String>()
 
         for ((index, entry) in listing.entries.withIndex()) {
             currentCoroutineContext().ensureActive()
             currentProcessId = "$processId-$index"
             val position = index + 1
+            overall = maxOf(overall, (index * 100) / total)
             _state.update {
                 it.copy(
-                    indeterminate = true,
-                    progress = (index * 100) / total,
+                    progress = overall,
+                    indeterminate = false,
                     status = "Item $position of $total · ${entry.title}",
                 )
             }
             var produced: File? = null
             try {
+                val meta = AudioMeta(
+                    title = entry.title,
+                    artist = listing.uploader,
+                    sourceUrl = entry.url,
+                )
                 val file = withContext(Dispatchers.IO) {
-                    repository.download(entry.url, entry.title, choice, "$processId-$index", cookies) { p, _, _ ->
-                        val overall = ((index + p.coerceIn(0f, 100f) / 100f) / total * 100f).toInt()
+                    repository.download(
+                        entry.url,
+                        entry.title,
+                        choice,
+                        "$processId-$index",
+                        cookies,
+                        meta,
+                    ) { p, _, _ ->
+                        val within = p.coerceIn(0f, 100f) / 100f
+                        val mapped = (((index + within) / total) * 100f).toInt()
+                        overall = maxOf(overall, mapped.coerceIn(0, 99))
                         _state.update {
                             it.copy(
-                                progress = overall.coerceIn(0, 100),
-                                indeterminate = p <= 0f,
+                                progress = overall,
+                                indeterminate = false,
                                 status = "$position/$total · ${p.coerceIn(0f, 100f).toInt()}% · " +
                                     entry.title.take(60),
                             )
@@ -340,7 +372,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 produced = file
                 _state.update {
                     it.copy(
-                        indeterminate = true,
+                        progress = overall,
+                        indeterminate = false,
                         status = "Saving $position/$total to Downloads/ReelRelay…",
                     )
                 }
@@ -356,7 +389,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        val kind = if (choice.extractAudioFormat != null) "audio files" else "files"
+        val audioOnly = choice.extractAudioFormat != null ||
+            (choice.video == null && choice.mergeTo == null && choice.height == 0)
+        val kind = if (audioOnly) "audio files" else "files"
         val message = buildString {
             append("Saved $saved of $total $kind to Downloads/ReelRelay")
             if (failed.isNotEmpty()) {
