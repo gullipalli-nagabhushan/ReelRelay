@@ -28,6 +28,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -301,6 +302,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * media3 marks the data-source factories as unstable, but they are the
+     * documented way to attach request headers to the preview stream.
+     */
+    @androidx.annotation.OptIn(UnstableApi::class)
     private fun showPreview(source: PreviewSource?) {
         releasePlayer()
         if (source == null) {

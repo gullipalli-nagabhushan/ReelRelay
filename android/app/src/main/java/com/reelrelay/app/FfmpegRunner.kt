@@ -1,6 +1,7 @@
 package com.reelrelay.app
 
 import android.content.Context
+import android.os.Build
 import com.yausername.ffmpeg.FFmpeg
 import kotlinx.coroutines.runInterruptible
 import java.io.File
@@ -165,7 +166,14 @@ object FfmpegRunner {
         val code = try {
             runInterruptible { process.waitFor() }
         } catch (t: Throwable) {
-            process.destroyForcibly()
+            // `destroyForcibly` arrived in API 26; plain `destroy` is enough
+            // to stop ffmpeg on the older devices we still support.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                process.destroyForcibly()
+            } else {
+                @Suppress("DEPRECATION")
+                process.destroy()
+            }
             reader.interrupt()
             throw t
         }

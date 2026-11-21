@@ -1,6 +1,7 @@
 package com.reelrelay.app
 
 import android.app.Application
+import androidx.core.content.edit
 import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
 import kotlinx.coroutines.CompletableDeferred
@@ -50,7 +51,7 @@ class ReelRelayApp : Application() {
         if (prefs.getString(KEY_YTDLP_VERSION, null) == BUNDLED_YTDLP_VERSION) return
         // Only the yt-dlp zipapp lives here; Python and ffmpeg are untouched.
         File(noBackupFilesDir, YTDLP_PACKAGE_DIR).deleteRecursively()
-        prefs.edit().putString(KEY_YTDLP_VERSION, BUNDLED_YTDLP_VERSION).apply()
+        prefs.edit { putString(KEY_YTDLP_VERSION, BUNDLED_YTDLP_VERSION) }
     }
 
     suspend fun awaitEngine(): Result<Unit> = engine.await()

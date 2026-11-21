@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!--
+        These two are deliberate, not oversights:
+
+        * `res/raw/ytdlp` is the yt-dlp zipapp. youtubedl-android extracts it by
+          resource name during initialization, so no Kotlin code references it.
+        * The app bundles arm64 Python, ffmpeg and yt-dlp, so an x86/x86_64
+          build cannot exist; ChromeOS runs it through the ARM translator.
+    -->
+    <issue id="UnusedResources">
+        <ignore path="src/main/res/raw/ytdlp" />
+    </issue>
+    <issue id="ChromeOsAbiSupport" severity="ignore" />
+</lint>

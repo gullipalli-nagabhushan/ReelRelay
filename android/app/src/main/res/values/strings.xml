@@ -13,9 +13,7 @@
     <string name="format_hint">Choose a format</string>
     <string name="empty_url">Paste a link first.</string>
     <string name="preview_unavailable">Inline preview is not available for this link. You can still download it.</string>
-    <string name="preparing">Reading the link…</string>
     <string name="downloading">Downloading…</string>
-    <string name="saved">Saved to Downloads/ReelRelay</string>
     <string name="storage_permission">Storage permission is needed to save on this Android version.</string>
     <string name="startup">Starting the on-device engine…</string>
     <string name="cookies_title">Instagram &amp; Facebook</string>
@@ -23,5 +21,4 @@
     <string name="cookies_loaded">cookies.txt imported — private posts use your session.</string>
     <string name="cookies_import">Import cookies.txt</string>
     <string name="cookies_clear">Remove</string>
-    <string name="cookies_invalid">That file is not a cookies.txt export.</string>
 </resources>
