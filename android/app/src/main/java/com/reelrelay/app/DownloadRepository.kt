@@ -229,17 +229,18 @@ class DownloadRepository(private val context: Context) {
                     )
                 }.isSuccess
             }
+            if (embedded && tagged.isFile && tagged.length() > 0L) {
+                // ffmpeg wrote the tags; for MP3/FLAC make sure the JPEG picture
+                // is present too by rebuilding the metadata region ourselves.
+                AudioTagger.embed(tagged, meta, cover)
+                produced.delete()
+                return tagged
+            }
+            tagged.delete()
+            return produced
         } finally {
             cover?.delete()
-            cover = null
         }
-
-        if (embedded && tagged.isFile && tagged.length() > 0L) {
-            produced.delete()
-            return tagged
-        }
-        tagged.delete()
-        return produced
     }
 
     /** Newest complete media file in a work directory. */

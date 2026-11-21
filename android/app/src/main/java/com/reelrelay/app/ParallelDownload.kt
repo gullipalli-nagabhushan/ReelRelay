@@ -65,6 +65,9 @@ object ParallelDownload {
                     onProgress(92f, 0L, "Cover art could not be embedded — keeping the tags…")
                     embed(context, source, target, targetFormat, audio.codec, choice, tags, null)
                 } finally {
+                    // Write the picture ourselves for MP3/FLAC: the bundled
+                    // ffmpeg's metadata step is not reliable on every device.
+                    if (meta != null) AudioTagger.embed(target, meta, cover)
                     cover?.delete()
                 }
                 onProgress(100f, 0L, "Saved ${target.name}")

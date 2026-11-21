@@ -272,13 +272,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         meta: AudioMeta?,
     ) {
         var produced: File? = null
+        var lastPercent = -1
+        var lastStatusAt = 0L
         try {
             val cookies = cookiesPath()
             val file = withContext(Dispatchers.IO) {
                 repository.download(url, title, choice, processId, cookies, meta) { progress, eta, line ->
+                    // Segment workers report every few kilobytes; rendering a
+                    // whole screen for each one is what made the UI stutter.
+                    val percent = progress.coerceIn(0f, 100f).toInt()
+                    val now = System.currentTimeMillis()
+                    if (percent == lastPercent && now - lastStatusAt < 450L) return@download
+                    lastPercent = percent
+                    lastStatusAt = now
                     _state.update {
                         it.copy(
-                            progress = progress.coerceIn(0f, 100f).toInt(),
+                            progress = percent,
                             indeterminate = false,
                             status = progressLine(progress, eta, line),
                         )
@@ -341,6 +350,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
             var produced: File? = null
+            var lastPercent = -1
+            var lastStatusAt = 0L
             try {
                 val meta = AudioMeta(
                     title = entry.title,
@@ -357,6 +368,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         cookies,
                         meta,
                     ) { p, _, _ ->
+                        val percent = p.coerceIn(0f, 100f).toInt()
+                        val now = System.currentTimeMillis()
+                        if (percent == lastPercent && now - lastStatusAt < 450L) return@download
+                        lastPercent = percent
+                        lastStatusAt = now
                         val within = p.coerceIn(0f, 100f) / 100f
                         val mapped = (((index + within) / total) * 100f).toInt()
                         overall = maxOf(overall, mapped.coerceIn(0, 99))
@@ -364,7 +380,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             it.copy(
                                 progress = overall,
                                 indeterminate = false,
-                                status = "$position/$total · ${p.coerceIn(0f, 100f).toInt()}% · " +
+                                status = "$position/$total · $percent% · " +
                                     entry.title.take(60),
                             )
                         }

@@ -1,6 +1,8 @@
 package com.reelrelay.app
 
 import android.Manifest
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
@@ -46,6 +48,10 @@ class MainActivity : AppCompatActivity() {
     private var lastError: String? = null
     private var lastDownloading = false
     private var lastInfo: MediaSummary? = null
+    private var lastProgress = -1
+    private var lastPercentText = ""
+    private var lastStatusText = ""
+    private var lastEngineText = ""
 
     private val storagePermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -76,7 +82,14 @@ class MainActivity : AppCompatActivity() {
             insets
         }
 
+        binding.versionText.text = getString(
+            R.string.version_label,
+            BuildConfig.VERSION_NAME,
+            BuildConfig.VERSION_CODE,
+        )
+
         binding.previewButton.setOnClickListener { submit() }
+        binding.pasteButton.setOnClickListener { pasteLink() }
         binding.downloadButton.setOnClickListener { onDownloadClicked() }
         binding.cancelButton.setOnClickListener { viewModel.cancelDownload() }
         binding.cookiesButton.setOnClickListener {
@@ -115,6 +128,21 @@ class MainActivity : AppCompatActivity() {
         viewModel.extract(binding.urlInput.text?.toString().orEmpty())
     }
 
+    /** Fills the field from the clipboard, which is how most links arrive. */
+    private fun pasteLink() {
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val text = clipboard.primaryClip
+            ?.takeIf { it.itemCount > 0 }
+            ?.getItemAt(0)
+            ?.coerceToText(this)
+            ?.toString()
+            ?.trim()
+            .orEmpty()
+        if (text.isEmpty()) return
+        binding.urlInput.setText(text)
+        binding.urlInput.setSelection(text.length)
+    }
+
     private fun onDownloadClicked() {
         val needsLegacyPermission = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
             ContextCompat.checkSelfPermission(
@@ -145,16 +173,19 @@ class MainActivity : AppCompatActivity() {
 
         val engineText = when {
             state.engineError != null -> "Engine error: ${state.engineError}"
-            state.engineReady -> "On-device engine ready — yt-dlp + ffmpeg"
+            state.engineReady -> "On-device engine ready · yt-dlp + ffmpeg"
             else -> getString(R.string.startup)
         }
-        binding.engineStatus.text = engineText
-        binding.engineStatus.setTextColor(
-            ContextCompat.getColor(
-                this,
-                if (state.engineError != null) R.color.rr_rose else R.color.rr_cyan,
+        if (engineText != lastEngineText) {
+            lastEngineText = engineText
+            binding.engineStatus.text = engineText
+            binding.engineStatus.setTextColor(
+                ContextCompat.getColor(
+                    this,
+                    if (state.engineError != null) R.color.rr_rose else R.color.rr_white,
+                )
             )
-        )
+        }
 
         binding.cookiesStatus.text = getString(
             if (state.cookiesLoaded) R.string.cookies_loaded else R.string.cookies_missing,
@@ -171,7 +202,9 @@ class MainActivity : AppCompatActivity() {
             binding.uploaderText.isVisible = info.uploader.isNotBlank()
             binding.metaText.text = info.durationLabel
             binding.metaText.isVisible = info.durationLabel.isNotBlank()
-            binding.thumbnail.load(info.thumbnail)
+            binding.thumbnail.load(info.thumbnail) {
+                crossfade(220)
+            }
 
             val playlist = state.playlist
             binding.playlistText.isVisible = playlist != null
@@ -194,19 +227,31 @@ class MainActivity : AppCompatActivity() {
         }
 
         updateChoices(state.choices, state.selectedIndex)
-        binding.formatLayout.isVisible = state.choices.isNotEmpty()
+        binding.formatCard.isVisible = state.choices.isNotEmpty()
+        binding.actionBar.isVisible = state.choices.isNotEmpty() || state.downloading
         binding.downloadButton.isVisible = state.choices.isNotEmpty() && !state.downloading
+        binding.downloadButton.isEnabled = state.choices.isNotEmpty() && !state.downloading
         binding.downloadButton.text = state.playlist?.let { listing ->
             getString(R.string.playlist_download, listing.entries.size)
         } ?: getString(R.string.download)
         val showProgress = state.downloading || state.progress >= 100
         binding.downloadProgress.isVisible = showProgress
         binding.downloadProgress.isIndeterminate = state.indeterminate
-        binding.downloadProgress.setProgressCompat(state.progress, true)
+        if (state.progress != lastProgress) {
+            lastProgress = state.progress
+            binding.downloadProgress.setProgressCompat(state.progress, true)
+        }
         binding.progressPercent.isVisible = showProgress
-        binding.progressPercent.text = "${state.progress}%"
-        binding.statusText.text = state.status
-        binding.statusText.isVisible = state.status.isNotBlank()
+        val percentText = "${state.progress}%"
+        if (percentText != lastPercentText) {
+            lastPercentText = percentText
+            binding.progressPercent.text = percentText
+        }
+        if (state.status != lastStatusText) {
+            lastStatusText = state.status
+            binding.statusText.text = state.status
+            binding.statusText.isVisible = state.status.isNotBlank()
+        }
         binding.cancelButton.isVisible = state.downloading
         binding.urlLayout.isEnabled = !state.downloading
 
@@ -229,15 +274,9 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** Brings the progress bar into view the moment a download starts. */
+    /** Brings the quality list into view when a download starts. */
     private fun scrollToProgress() {
-        var offset = 0
-        var view: View? = binding.downloadProgress
-        while (view != null && view !== binding.root) {
-            offset += view.top
-            view = view.parent as? View
-        }
-        binding.root.smoothScrollTo(0, (offset - 24).coerceAtLeast(0))
+        binding.scroll.smoothScrollTo(0, binding.formatCard.top)
     }
 
     private fun updateChoices(choices: List<FormatChoice>, selected: Int) {
