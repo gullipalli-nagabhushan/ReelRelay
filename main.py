@@ -82,7 +82,7 @@ for _extension, _mime_type in {
     ".webp": "image/webp",
     ".woff2": "font/woff2",
 }.items():
-    mimetypes.add_type(_mime_type, _extension, strict=False)
+    mimetypes.add_type(_mime_type, _extension)
 
 
 app = FastAPI(
