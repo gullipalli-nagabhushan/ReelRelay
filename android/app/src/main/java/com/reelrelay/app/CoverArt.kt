@@ -3,6 +3,7 @@ package com.reelrelay.app
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import androidx.core.graphics.scale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -22,6 +23,12 @@ import java.util.concurrent.TimeUnit
  * fetched in order. Conversion uses Android's own decoder first (which handles
  * WebP on every supported version) and only falls back to ffmpeg.
  *
+ * The result is always a square JPEG. Video thumbnails are 16:9, and music
+ * players draw artwork in a square tile: handed a wide image they either crop
+ * it or, worse, stretch it (which is what an Android player did to the
+ * "Hunter Entry" cover). A centred square crop keeps the poster whole because
+ * YouTube pillarboxes vertical artwork.
+ *
  * Cover art stays optional: every failure returns `null` and the audio is still
  * tagged.
  */
@@ -29,7 +36,7 @@ object CoverArt {
 
     private const val MIN_BYTES = 1024L
     private const val MAX_BYTES = 8L * 1024 * 1024
-    private const val MAX_EDGE = 1600
+    private const val COVER_EDGE = 720
     private val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "webp")
 
     private val client: OkHttpClient by lazy {
@@ -97,7 +104,7 @@ object CoverArt {
 
     private suspend fun normalise(context: Context, bytes: ByteArray, destination: File): File? {
         if (bytes.size < MIN_BYTES || bytes.size > MAX_BYTES) return null
-        val jpeg = if (isJpeg(bytes)) bytes else jpegBytes(bytes) ?: ffmpegJpeg(context, bytes)
+        val jpeg = squareJpeg(bytes) ?: ffmpegJpeg(context, bytes)?.let { squareJpeg(it) }
         if (jpeg == null || jpeg.size < MIN_BYTES) return null
         return runCatching {
             destination.writeBytes(jpeg)
@@ -105,25 +112,51 @@ object CoverArt {
         }.getOrNull()
     }
 
-    /** Decodes WebP/PNG with the platform decoder and re-encodes as JPEG. */
-    private fun jpegBytes(bytes: ByteArray): ByteArray? = runCatching {
+    /**
+     * Decodes any image Android understands and returns a square JPEG.
+     *
+     * Images that are already square, small enough and already JPEG are
+     * returned untouched so nothing is recompressed.
+     */
+    private fun squareJpeg(bytes: ByteArray): ByteArray? = runCatching {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-        var sample = 1
-        while (bounds.outWidth / (sample * 2) >= MAX_EDGE &&
-            bounds.outHeight / (sample * 2) >= MAX_EDGE
+        val shortSide = minOf(bounds.outWidth, bounds.outHeight)
+        if (bounds.outWidth == bounds.outHeight &&
+            shortSide <= COVER_EDGE &&
+            isJpeg(bytes)
         ) {
-            sample *= 2
+            return bytes
         }
-        val options = BitmapFactory.Options().apply { inSampleSize = sample }
-        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options) ?: return null
+        var sample = 1
+        while (shortSide / (sample * 2) >= COVER_EDGE) sample *= 2
+        val decoded = BitmapFactory.decodeByteArray(
+            bytes,
+            0,
+            bytes.size,
+            BitmapFactory.Options().apply { inSampleSize = sample },
+        ) ?: return null
+
+        val (left, top, side) = centreSquare(decoded.width, decoded.height)
+        var square = if (side == decoded.width && side == decoded.height) {
+            decoded
+        } else {
+            Bitmap.createBitmap(decoded, left, top, side, side).also {
+                if (it !== decoded) decoded.recycle()
+            }
+        }
+        if (square.width > COVER_EDGE) {
+            val scaled = square.scale(COVER_EDGE, COVER_EDGE)
+            if (scaled !== square) square.recycle()
+            square = scaled
+        }
         val out = ByteArrayOutputStream()
         try {
-            if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)) return null
+            if (!square.compress(Bitmap.CompressFormat.JPEG, 90, out)) return null
             out.toByteArray()
         } finally {
-            bitmap.recycle()
+            square.recycle()
         }
     }.getOrNull()
 
@@ -195,4 +228,17 @@ object CoverArt {
         val gif = bytes[0] == 0x47.toByte() && bytes[1] == 0x49.toByte()
         return png || riff || gif
     }
+}
+
+/**
+ * Centre square of a [width]×[height] image, as (left, top, side).
+ *
+ * Album art is drawn in a square tile. A 16:9 video thumbnail that is not
+ * cropped first gets stretched by players that scale to fill (the "Hunter
+ * Entry" cover did). Cropping the short side keeps the centre intact, and for
+ * pillarboxed vertical posters it removes exactly the side bars.
+ */
+internal fun centreSquare(width: Int, height: Int): Triple<Int, Int, Int> {
+    val side = minOf(width, height)
+    return Triple((width - side) / 2, (height - side) / 2, side)
 }

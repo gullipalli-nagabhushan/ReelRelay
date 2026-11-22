@@ -1,10 +1,11 @@
 """Cover-art retrieval.
 
 The video thumbnail is fetched through the local app (so the user's browser
-never needs to talk to Google) and normalised to JPEG, which is what every
-tag reader understands.  The image is kept in memory; nothing is written to
-disk unless ffmpeg explicitly needs a file input (FLAC cover embedding), in
-which case a short-lived temp file is created and deleted immediately.
+never needs to talk to Google) and normalised to a square JPEG, which is what
+every tag reader understands and what phone players expect. The image is kept
+in memory; nothing is written to disk unless ffmpeg explicitly needs a file
+input (FLAC cover embedding), in which case a short-lived temp file is created
+and deleted immediately.
 """
 
 from __future__ import annotations
@@ -47,11 +48,16 @@ def cover_candidates(info: dict[str, Any]) -> list[str]:
 
 
 def _to_jpeg(data: bytes) -> bytes | None:
-    """Convert any image bytes to JPEG using ffmpeg (already required for audio)."""
-    if data[:2] == b"\xff\xd8":
-        return data
+    """Convert any image bytes to a square JPEG using ffmpeg.
+
+    Phone players draw album art in a square tile. A 16:9 thumbnail handed to
+    them uncropped is stretched (a vertical poster becomes tall and thin), so
+    the centre square is all that is kept. For a pillarboxed poster this also
+    removes exactly the side bars. Without ffmpeg a JPEG is still usable as-is;
+    other formats cannot be converted.
+    """
     if not config.FFMPEG:
-        return None
+        return data if data[:2] == b"\xff\xd8" else None
     try:
         result = subprocess.run(
             [
@@ -63,6 +69,9 @@ def _to_jpeg(data: bytes) -> bytes | None:
                 "pipe:0",
                 "-frames:v",
                 "1",
+                # Commas inside min() must be escaped for ffmpeg's filter parser.
+                "-vf",
+                "crop=min(iw\\,ih):min(iw\\,ih)",
                 "-c:v",
                 "mjpeg",
                 "-q:v",
@@ -77,10 +86,11 @@ def _to_jpeg(data: bytes) -> bytes | None:
         )
     except Exception:  # noqa: BLE001
         logger.exception("Cover conversion failed")
-        return None
+        return data if data[:2] == b"\xff\xd8" else None
     if result.returncode != 0 or not result.stdout:
         logger.warning("Cover conversion failed: %s", result.stderr[-300:])
-        return None
+        # Keep something rather than losing the art to a broken ffmpeg build.
+        return data if data[:2] == b"\xff\xd8" else None
     return result.stdout
 
 
