@@ -11,7 +11,9 @@ Design goals
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import mimetypes
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -66,6 +68,23 @@ async def lifespan(app: FastAPI):
     yield
 
 
+# Windows resolves MIME types through the registry, where `.js` is sometimes
+# registered as `text/plain`. The app sends `X-Content-Type-Options: nosniff`,
+# so a wrong type would make browsers refuse the stylesheet and script. Pin the
+# types the app actually serves so behaviour does not depend on the host.
+for _extension, _mime_type in {
+    ".css": "text/css",
+    ".js": "text/javascript",
+    ".mjs": "text/javascript",
+    ".svg": "image/svg+xml",
+    ".ico": "image/x-icon",
+    ".json": "application/json",
+    ".webp": "image/webp",
+    ".woff2": "font/woff2",
+}.items():
+    mimetypes.add_type(_mime_type, _extension, strict=False)
+
+
 app = FastAPI(
     title=config.APP_NAME,
     description=(
@@ -90,16 +109,17 @@ def _asset_token(path: str) -> str:
     """Short token that changes whenever the file on disk changes.
 
     Static files are cached for a year (see the middleware below), so the URL
-    must change with the content or an edit would never reach the browser.
-    Modification time and size are enough to notice a save and are much
-    cheaper than hashing the whole file on every page render.
+    must change with the content or an edit would never reach the browser. The
+    content is hashed rather than using its modification time: some filesystems
+    only store whole seconds, and an edit that keeps the same size would then
+    keep the old URL. The assets are small, so the hash is cheap.
     """
     file = BASE_DIR / "static" / path.lstrip("/")
     try:
-        info = file.stat()
+        data = file.read_bytes()
     except OSError:
         return config.APP_VERSION
-    return f"{info.st_mtime_ns:x}-{info.st_size:x}"
+    return hashlib.blake2b(data, digest_size=8).hexdigest()
 
 
 def static_url(path: str) -> str:

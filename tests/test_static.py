@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import mimetypes
 import re
 
 import pytest
@@ -25,7 +26,7 @@ def test_home_page_links_versioned_assets(client: TestClient) -> None:
     assert response.headers["cache-control"] == "no-store"
     for name in ("css/style.css", "js/main.js", "img/reelrelay.svg", "img/reelrelay.ico"):
         assert re.search(
-            rf"/static/{re.escape(name)}\?v=[0-9a-f]+-[0-9a-f]+",
+            rf"/static/{re.escape(name)}\?v=[0-9a-f]+",
             response.text,
         ), name
 
@@ -38,6 +39,13 @@ def test_versioned_asset_is_immutable(client: TestClient) -> None:
     assert response.headers["content-type"].startswith("text/javascript")
 
 
+def test_script_and_style_types_do_not_depend_on_the_host() -> None:
+    # Windows reads .js from the registry, where it may be text/plain. With
+    # nosniff that makes browsers block the file, so the app pins both types.
+    assert mimetypes.types_map[".js"] == "text/javascript"
+    assert mimetypes.types_map[".css"] == "text/css"
+
+
 def test_unversioned_asset_still_revalidates(client: TestClient) -> None:
     response = client.get("/static/js/main.js")
 
@@ -45,7 +53,7 @@ def test_unversioned_asset_still_revalidates(client: TestClient) -> None:
     assert response.headers["cache-control"] == "no-cache"
 
 
-def test_token_changes_when_the_file_changes(tmp_path, monkeypatch) -> None:
+def test_token_changes_when_the_content_changes(tmp_path, monkeypatch) -> None:
     asset = tmp_path / "static" / "css" / "style.css"
     asset.parent.mkdir(parents=True)
     asset.write_text("body { color: red; }", encoding="utf-8")
@@ -54,7 +62,8 @@ def test_token_changes_when_the_file_changes(tmp_path, monkeypatch) -> None:
     before = main.static_url("/css/style.css")
     assert before.startswith("/static/css/style.css?v=")
 
-    asset.write_text("body { color: blue; }", encoding="utf-8")
+    # Same length, so a size-based or coarse-timestamp token would miss it.
+    asset.write_text("body { color: tan; }", encoding="utf-8")
     after = main.static_url("/css/style.css")
 
     assert before != after
