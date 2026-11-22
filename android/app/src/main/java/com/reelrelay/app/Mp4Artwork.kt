@@ -18,11 +18,11 @@ internal object Mp4Artwork {
         "moov", "trak", "mdia", "minf", "stbl", "edts", "dinf",
     )
 
-    fun embed(file: File, meta: AudioMeta, cover: ByteArray): Boolean = runCatching {
+    fun embed(file: File, meta: AudioMeta, cover: ByteArray?): Boolean = runCatching {
         embedOrFail(file, meta, cover)
     }.getOrDefault(false)
 
-    private fun embedOrFail(file: File, meta: AudioMeta, cover: ByteArray): Boolean {
+    private fun embedOrFail(file: File, meta: AudioMeta, cover: ByteArray?): Boolean {
         val bytes = file.readBytes()
         val top = boxes(bytes, 0, bytes.size) ?: return false
         val moov = top.firstOrNull { it.type == "moov" } ?: return false
@@ -72,7 +72,7 @@ internal object Mp4Artwork {
             temp.copyTo(file, overwrite = true)
             temp.delete()
         }
-        return hasCover(file)
+        return file.isFile && file.length() > 0L
     }
 
     fun hasCover(file: File): Boolean = runCatching {
@@ -170,7 +170,7 @@ internal object Mp4Artwork {
         return box("udta", payload)
     }
 
-    private fun buildMetadata(meta: AudioMeta, cover: ByteArray): ByteArray {
+    private fun buildMetadata(meta: AudioMeta, cover: ByteArray?): ByteArray {
         val out = java.io.ByteArrayOutputStream()
         textAtom("\u00A9nam", meta.title).takeIf { it.isNotEmpty() }?.let(out::write)
         textAtom("\u00A9ART", meta.artist).takeIf { it.isNotEmpty() }?.let(out::write)
@@ -178,7 +178,7 @@ internal object Mp4Artwork {
         textAtom("\u00A9cmt", "Source: ${meta.sourceUrl}").takeIf { it.isNotEmpty() }
             ?.let(out::write)
         textAtom("\u00A9too", "ReelRelay").takeIf { it.isNotEmpty() }?.let(out::write)
-        out.write(box("covr", dataAtom(13, cover)))
+        if (cover != null && cover.isNotEmpty()) out.write(box("covr", dataAtom(13, cover)))
         return out.toByteArray()
     }
 

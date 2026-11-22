@@ -303,13 +303,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
             val uri = withContext(Dispatchers.IO) { MediaPublisher.publish(app, file) }
+            val location = uri?.let { MediaPublisher.locationOf(app, it) }
             _state.update {
                 it.copy(
                     downloading = false,
                     progress = 100,
                     indeterminate = false,
                     status = if (uri != null) {
-                        "Saved to Downloads/ReelRelay — ${file.name}"
+                        "Saved · ${location ?: "Downloads/ReelRelay"}"
                     } else {
                         "The file could not be saved."
                     },

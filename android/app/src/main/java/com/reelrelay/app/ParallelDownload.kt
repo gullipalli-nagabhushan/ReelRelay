@@ -19,7 +19,6 @@ object ParallelDownload {
         title: String,
         choice: FormatChoice,
         workDir: File,
-        meta: AudioMeta? = null,
         onProgress: (Float, Long, String) -> Unit,
     ): File? {
         val video = choice.video
@@ -35,41 +34,31 @@ object ParallelDownload {
             val sourceLabel = if (choice.extractAudioFormat != null) "video" else "audio"
             val targetFormat = (choice.extractAudioFormat
                 ?: audio.extensionOr("m4a")).lowercase(Locale.US)
-            val taggable = meta != null && targetFormat in TAGGED_CONTAINERS
 
-            // Keep the original stream untouched when no tags can be written.
-            if (choice.extractAudioFormat == null && !taggable) {
+            // No conversion requested: keep the stream untouched. Tags and
+            // artwork are written by [DownloadRepository] afterwards, so the
+            // accelerated and yt-dlp paths produce identical metadata.
+            if (choice.extractAudioFormat == null) {
                 val target = File(workDir, "$base.${audio.extensionOr("m4a")}")
-                downloadStream(downloader, audio, target, onProgress, "audio", 0f, 99f)
+                downloadStream(downloader, audio, target, onProgress, sourceLabel, 0f, 99f)
                 onProgress(100f, 0L, "Saved ${target.name}")
                 return target
             }
 
             val source = File(workDir, "$base.source.${audio.extensionOr("m4a")}")
-            downloadStream(downloader, audio, source, onProgress, sourceLabel, 0f, 86f)
+            downloadStream(downloader, audio, source, onProgress, sourceLabel, 0f, 90f)
             try {
                 val target = File(workDir, "$base.$targetFormat")
-                onProgress(88f, 0L, "Adding tags and cover art…")
-                val cover = if (targetFormat in COVER_CONTAINERS) {
-                    fetchCover(context, meta, workDir, base)
-                } else {
-                    null
-                }
-                val tags = meta?.tags().orEmpty()
-                try {
-                    embed(context, source, target, targetFormat, audio.codec, choice, tags, cover)
-                } catch (t: Throwable) {
-                    if (cover == null) throw t
-                    // A corrupt or unsupported image must not lose the audio.
-                    target.delete()
-                    onProgress(92f, 0L, "Cover art could not be embedded — keeping the tags…")
-                    embed(context, source, target, targetFormat, audio.codec, choice, tags, null)
-                } finally {
-                    // Write the picture ourselves for MP3/FLAC: the bundled
-                    // ffmpeg's metadata step is not reliable on every device.
-                    if (meta != null) AudioTagger.embed(target, meta, cover)
-                    cover?.delete()
-                }
+                onProgress(91f, 0L, "Converting to ${targetFormat.uppercase(Locale.US)}…")
+                FfmpegRunner.convertAudio(
+                    context = context,
+                    source = source,
+                    output = target,
+                    format = targetFormat,
+                    codec = audio.codec,
+                    bitrate = choice.extractAudioBitrate,
+                    copyAudio = false,
+                )
                 onProgress(100f, 0L, "Saved ${target.name}")
                 return target
             } finally {
@@ -112,36 +101,6 @@ object ParallelDownload {
             audioFile.delete()
         }
     }
-
-    private suspend fun embed(
-        context: Context,
-        source: File,
-        target: File,
-        format: String,
-        codec: String?,
-        choice: FormatChoice,
-        tags: Map<String, String>,
-        cover: File?,
-    ) {
-        FfmpegRunner.convertAudio(
-            context = context,
-            source = source,
-            output = target,
-            format = format,
-            codec = codec,
-            bitrate = choice.extractAudioBitrate,
-            copyAudio = choice.extractAudioFormat == null,
-            tags = tags,
-            cover = cover,
-        )
-    }
-
-    private suspend fun fetchCover(
-        context: Context,
-        meta: AudioMeta?,
-        workDir: File,
-        base: String,
-    ): File? = CoverArt.fetchFor(context, meta, workDir, base)
 
     private suspend fun downloadStream(
         downloader: SegmentDownloader,

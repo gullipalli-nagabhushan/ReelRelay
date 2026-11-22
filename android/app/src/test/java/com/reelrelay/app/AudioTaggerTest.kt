@@ -71,7 +71,7 @@ class AudioTaggerTest {
         assertTrue(tag.contains("TPE2"))
         assertTrue(tag.contains("COMM"))
         assertTrue(tag.contains("APIC"))
-        assertTrue(tag.contains("TENC"))
+        assertTrue(tag.contains("TSSE"))
         assertTrue(originalAudio.contentEquals(audioTail(file)))
     }
 
@@ -87,10 +87,19 @@ class AudioTaggerTest {
     }
 
     @Test
-    fun `mp3 keeps its audio readable when no cover is supplied`() {
+    fun `mp3 still gets text tags when no cover is available`() {
         val file = fixture("sample.mp3")
-        assertFalse(AudioTagger.embed(file, meta, null))
+        val originalAudio = audioTail(file)
+
+        assertTrue(AudioTagger.embed(file, meta, null))
         assertFalse(AudioTagger.hasCover(file))
+
+        val bytes = file.readBytes()
+        val tag = String(bytes, 0, minOf(bytes.size, 4096), Charsets.ISO_8859_1)
+        assertTrue(tag.contains("TIT2"))
+        assertTrue(tag.contains("TSSE"))
+        assertFalse(tag.contains("APIC"))
+        assertTrue(originalAudio.contentEquals(audioTail(file)))
     }
 
     @Test
@@ -161,6 +170,35 @@ class AudioTaggerTest {
         val first = file.length()
         assertTrue(AudioTagger.embed(file, meta, picture))
         assertEquals(first, file.length())
+    }
+
+    @Test
+    fun `flac still gets comments when no cover is available`() {
+        val file = fixture("sample.flac")
+        val originalAudio = audioTail(file)
+
+        assertTrue(AudioTagger.embed(file, meta, null))
+        assertFalse(AudioTagger.hasCover(file))
+
+        val bytes = file.readBytes()
+        val tag = String(bytes, 0, minOf(bytes.size, 4096), Charsets.UTF_8)
+        assertTrue(tag.contains("TITLE=Tëst ✓"))
+        assertTrue(originalAudio.contentEquals(audioTail(file)))
+    }
+
+    @Test
+    fun `m4a still gets text atoms when no cover is available`() {
+        val file = fixture("sample.m4a")
+        val original = mdatPayload(file)
+
+        assertTrue(AudioTagger.embed(file, meta, null))
+        assertFalse(AudioTagger.hasCover(file))
+
+        val bytes = file.readBytes()
+        val atoms = String(bytes, 0, minOf(bytes.size, 8192), Charsets.ISO_8859_1)
+        assertTrue(atoms.contains("©nam"))
+        assertFalse(atoms.contains("covr"))
+        assertTrue(original.contentEquals(mdatPayload(file)))
     }
 
     @Test

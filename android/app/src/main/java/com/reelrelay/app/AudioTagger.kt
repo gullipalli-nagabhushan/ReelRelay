@@ -25,19 +25,20 @@ object AudioTagger {
         extension.lowercase(Locale.US) in CONTAINERS
 
     /**
-     * Rewrites [file] in place with [meta]'s tags and [cover] (a JPEG).
-     * Returns `true` when the file now contains a cover picture.
+     * Rewrites [file] in place with [meta]'s tags and, when supplied, [cover]
+     * (a JPEG). Returns `true` when the metadata region was rewritten.
+     *
+     * No re-encoding happens, so the audio frames are never touched. A `null`
+     * cover still updates the text tags: this is the fallback that guarantees
+     * readable tags even when the bundled ffmpeg cannot run.
      */
     fun embed(file: File, meta: AudioMeta, cover: File?): Boolean = runCatching {
-        // Without a picture there is nothing to improve: ffmpeg already wrote
-        // the text tags, so leave its output untouched.
         val coverBytes = cover?.takeIf { it.isFile && it.length() > 0L }?.readBytes()
-            ?: return false
         when (file.extension.lowercase(Locale.US)) {
             "mp3" -> rewriteMp3(file, meta, coverBytes)
             "flac" -> rewriteFlac(file, meta, coverBytes)
             "m4a" -> Mp4Artwork.embed(file, meta, coverBytes)
-            else -> return false
+            else -> false
         }
     }.getOrDefault(false)
 
@@ -70,7 +71,9 @@ object AudioTagger {
         frames += textFrame("TPE2", meta.artist)
         frames += commentFrame("COMM", "Source: ${meta.sourceUrl}")
         if (cover != null && cover.isNotEmpty()) frames += pictureFrame(cover)
-        frames += textFrame("TENC", "ReelRelay")
+        // Same frame the desktop writer uses, so every player shows
+        // "encoder = ReelRelay" and the file is recognisably ours.
+        frames += textFrame("TSSE", "ReelRelay")
 
         val payloadSize = frames.sumOf { it.size }
         val header = ByteArray(10)
@@ -335,6 +338,6 @@ object AudioTagger {
             temp.copyTo(target, overwrite = true)
             temp.delete()
         }
-        return hasCover(target)
+        return target.isFile && target.length() > 0L
     }
 }

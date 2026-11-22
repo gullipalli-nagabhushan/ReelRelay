@@ -46,7 +46,7 @@ class DownloadRepository(private val context: Context) {
         val progress = ProgressSink(onProgress)
         try {
             val accelerated = try {
-                ParallelDownload.download(context, title, choice, workDir, meta, progress::report)
+                ParallelDownload.download(context, title, choice, workDir, progress::report)
             } catch (cancel: CancellationException) {
                 throw cancel
             } catch (t: Throwable) {
@@ -54,7 +54,16 @@ class DownloadRepository(private val context: Context) {
                 null
             }
             if (accelerated != null && accelerated.isFile && accelerated.length() > 0L) {
-                return@withContext accelerated
+                // Tags and artwork are always added here, never by the path that
+                // produced the file: an accelerated download and a yt-dlp
+                // download of the same song must be byte-compatible in metadata.
+                val finished = if (meta != null && isAudioFile(accelerated)) {
+                    finalizeAudio(meta, workDir, accelerated, progress)
+                } else {
+                    accelerated
+                }
+                progress.report(97f, 0L, "Finishing ${finished.name}…")
+                return@withContext finished
             }
             accelerated?.delete()
             workDir.listFiles()?.forEach { it.delete() }
@@ -129,11 +138,18 @@ class DownloadRepository(private val context: Context) {
 
         val audioOnly = choice.extractAudioFormat != null ||
             (choice.video == null && choice.mergeTo == null && choice.height == 0)
+        // The Kotlin writer below adds tags (and artwork) without re-encoding.
+        // Letting yt-dlp run its own metadata pass as well meant a second
+        // ffmpeg remux at the end of every download, which is slow and can
+        // silently drop the picture on some device builds.
+        val targetFormat = (choice.extractAudioFormat ?: choice.audio?.ext ?: "m4a")
+            .lowercase(Locale.US)
+        val localTagger = meta != null && AudioTagger.supports(targetFormat)
         if (meta != null && audioOnly) {
-            // yt-dlp writes title/artist/source tags. Cover art is added by the
-            // bundled ffmpeg below, which handles every container consistently
-            // (yt-dlp's own embed needs mutagen or a working ffprobe path).
-            request.addOption("--add-metadata")
+            if (!localTagger) request.addOption("--add-metadata")
+            // Keep a copy of the thumbnail beside the audio: it is a reliable
+            // cover source even when the phone cannot reach the image CDN.
+            request.addOption("--write-thumbnail")
         }
 
         // yt-dlp sweeps 0→100 for every stream it fetches, which made the bar
@@ -179,9 +195,10 @@ class DownloadRepository(private val context: Context) {
     /**
      * Adds our tags and cover art to an audio file yt-dlp produced.
      *
-     * Everything is copied, never re-encoded, so the chosen quality is kept.
-     * A container or image the bundled ffmpeg cannot handle simply keeps the
-     * file yt-dlp wrote (which already has its metadata).
+     * MP3/FLAC/M4A are rewritten in place by [AudioTagger], which needs no
+     * ffmpeg and never touches the audio frames. Only formats it cannot write
+     * (WAV) go through an ffmpeg remux, and even then a failed remux keeps the
+     * downloaded file.
      */
     private suspend fun finalizeAudio(
         meta: AudioMeta,
@@ -191,32 +208,31 @@ class DownloadRepository(private val context: Context) {
     ): File {
         val format = produced.extension.lowercase(Locale.US)
         if (format !in TAGGED_CONTAINERS) return produced
-        progress.report(95f, 0L, "Adding tags and cover art…")
+        progress.report(95f, 0L, "Fetching cover art…")
 
-        val tagged = File(workDir, "tagged.${produced.extension}")
-        var cover = if (format in COVER_CONTAINERS) {
+        val cover = if (format in COVER_CONTAINERS) {
             CoverArt.fetchFor(context, meta, workDir, "tagged")
         } else {
             null
         }
-        var embedded = false
         try {
-            embedded = runCatching {
-                FfmpegRunner.convertAudio(
-                    context = context,
-                    source = produced,
-                    output = tagged,
-                    format = format,
-                    codec = null,
-                    copyAudio = true,
-                    tags = meta.tags(),
-                    cover = cover,
+            if (AudioTagger.supports(format)) {
+                progress.report(97f, 0L, "Adding tags and cover art…")
+                val written = AudioTagger.embed(produced, meta, cover)
+                Log.i(
+                    TAG,
+                    "Tagged ${produced.name}: written=$written " +
+                        "cover=${if (cover != null) "${cover.length()} bytes" else "none"}",
                 )
-            }.isSuccess
-            if (!embedded && cover != null) {
-                currentCoroutineContext().ensureActive()
-                tagged.delete()
-                embedded = runCatching {
+                if (written) return produced
+            }
+
+            // WAV, or a file the writer could not parse: let ffmpeg rebuild the
+            // tag block, and keep the downloaded original if even that fails.
+            progress.report(96f, 0L, "Adding tags and cover art…")
+            val tagged = File(workDir, "tagged.${produced.extension}")
+            return try {
+                var embedded = runCatching {
                     FfmpegRunner.convertAudio(
                         context = context,
                         source = produced,
@@ -225,23 +241,45 @@ class DownloadRepository(private val context: Context) {
                         codec = null,
                         copyAudio = true,
                         tags = meta.tags(),
-                        cover = null,
+                        cover = cover,
                     )
                 }.isSuccess
+                if (!embedded && cover != null) {
+                    currentCoroutineContext().ensureActive()
+                    tagged.delete()
+                    embedded = runCatching {
+                        FfmpegRunner.convertAudio(
+                            context = context,
+                            source = produced,
+                            output = tagged,
+                            format = format,
+                            codec = null,
+                            copyAudio = true,
+                            tags = meta.tags(),
+                            cover = null,
+                        )
+                    }.isSuccess
+                }
+                if (embedded && tagged.isFile && tagged.length() > 0L) {
+                    AudioTagger.embed(tagged, meta, cover)
+                    produced.delete()
+                    tagged
+                } else {
+                    tagged.delete()
+                    produced
+                }
+            } catch (t: Throwable) {
+                tagged.delete()
+                throw t
             }
-            if (embedded && tagged.isFile && tagged.length() > 0L) {
-                // ffmpeg wrote the tags; for MP3/FLAC make sure the JPEG picture
-                // is present too by rebuilding the metadata region ourselves.
-                AudioTagger.embed(tagged, meta, cover)
-                produced.delete()
-                return tagged
-            }
-            tagged.delete()
-            return produced
         } finally {
             cover?.delete()
         }
     }
+
+    /** True for containers our tag writer (or the ffmpeg fallback) handles. */
+    private fun isAudioFile(file: File): Boolean =
+        file.extension.lowercase(Locale.US) in TAGGED_CONTAINERS
 
     /** Newest complete media file in a work directory. */
     private fun newestMediaFile(workDir: File): File? =
@@ -303,6 +341,8 @@ internal class ProgressSink(
 /** Copies a finished file into Downloads/ReelRelay so it survives app removal. */
 object MediaPublisher {
 
+    private const val TAG = "ReelRelayPublish"
+
     fun publish(context: Context, file: File): Uri? {
         val mime = mimeType(file)
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -349,11 +389,37 @@ object MediaPublisher {
                 put(MediaStore.MediaColumns.IS_PENDING, 0)
             }
             resolver.update(uri, done, null, null)
+            Log.i(TAG, "Saved ${locationOf(context, uri)} (${file.length()} bytes)")
             uri
         } catch (t: Throwable) {
             resolver.delete(uri, null, null)
             throw t
         }
+    }
+
+    /**
+     * Human-readable path of a published file, as MediaStore actually stored
+     * it. Some OEMs ignore `RELATIVE_PATH`, so the UI reports the real place
+     * instead of assuming `Downloads/ReelRelay`.
+     */
+    fun locationOf(context: Context, uri: Uri): String? {
+        if (uri.scheme != "content") return uri.path
+        val projection = arrayOf(
+            MediaStore.MediaColumns.RELATIVE_PATH,
+            MediaStore.MediaColumns.DISPLAY_NAME,
+        )
+        return runCatching {
+            context.contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+                if (!cursor.moveToFirst()) return@use null
+                val path = cursor.getString(0).orEmpty()
+                val name = cursor.getString(1).orEmpty()
+                when {
+                    path.isBlank() && name.isBlank() -> null
+                    path.isBlank() -> name
+                    else -> path + name
+                }
+            }
+        }.getOrNull()
     }
 
     @Suppress("DEPRECATION")
