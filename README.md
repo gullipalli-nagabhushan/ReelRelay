@@ -36,7 +36,7 @@ the platform's CDN or piped from ffmpeg's stdout directly into the HTTP
 response. The only lasting file is the ordinary browser download chosen by the
 user.
 
-**Version:** 3.0.0 · **Status:** actively maintained · **License:** MIT
+**Version:** 3.1.0 · **Status:** actively maintained · **License:** MIT
 
 <p align="center">
   <img src="docs/screenshot.png" alt="ReelRelay landing page showing the search box, 8K badge and example videos" width="100%">

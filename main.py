@@ -85,6 +85,31 @@ templates.env.filters["human_size"] = human_size
 templates.env.filters["human_duration"] = human_duration
 templates.env.filters["compact"] = compact_number
 
+
+def _asset_token(path: str) -> str:
+    """Short token that changes whenever the file on disk changes.
+
+    Static files are cached for a year (see the middleware below), so the URL
+    must change with the content or an edit would never reach the browser.
+    Modification time and size are enough to notice a save and are much
+    cheaper than hashing the whole file on every page render.
+    """
+    file = BASE_DIR / "static" / path.lstrip("/")
+    try:
+        info = file.stat()
+    except OSError:
+        return config.APP_VERSION
+    return f"{info.st_mtime_ns:x}-{info.st_size:x}"
+
+
+def static_url(path: str) -> str:
+    """Versioned URL for a bundled asset, e.g. `/static/js/main.js?v=…`."""
+    clean = "/" + path.lstrip("/")
+    return f"/static{clean}?v={_asset_token(clean)}"
+
+
+templates.env.globals["static_url"] = static_url
+
 # --------------------------------------------------------------------------- #
 # Download concurrency guard
 # --------------------------------------------------------------------------- #
@@ -120,6 +145,21 @@ async def security_headers(request: Request, call_next):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+
+    path = request.url.path
+    if path.startswith("/static/"):
+        if response.status_code in (200, 304):
+            if "v" in request.query_params:
+                # The URL changes with the file, so the browser never has to
+                # revalidate it: no more conditional "304 Not Modified" round
+                # trips, and no stale CSS or JavaScript after an edit.
+                response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            else:
+                response.headers.setdefault("Cache-Control", "no-cache")
+    elif response.headers.get("content-type", "").startswith("text/html"):
+        # Pages embed the versioned asset URLs above; caching the markup would
+        # keep old tokens alive after an update.
+        response.headers.setdefault("Cache-Control", "no-store")
     return response
 
 
