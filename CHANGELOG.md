@@ -75,10 +75,13 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 - Web-app static assets no longer rely on conditional requests that show up as
   `304 Not Modified`. `style.css`, `main.js` and the icons are referenced with a
-  token derived from each file's modification time and size, served with
+  token derived from each file's content, served with
   `Cache-Control: public, max-age=31536000, immutable`, and the HTML that carries
   those URLs is `no-store`. The browser fetches each file once, an edit gets a
   fresh URL, and a stale cached sheet or script can no longer hide a UI change.
+  CSS, JavaScript and the other bundled asset types are also registered
+  explicitly, because Windows resolves `.js` through the registry and can call it
+  `text/plain`; with `nosniff` that would make browsers reject the script.
 - Android progress no longer sweeps back and forth or completes several times
   per video. A monotonic progress mapping treats separate video and audio
   streams as slices of one bar, retries no longer subtract downloaded bytes from
