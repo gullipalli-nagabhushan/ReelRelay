@@ -17,6 +17,13 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   extracted from the source and written to every format that supports them,
   exposed in the preview tag editor, and accepted as `/api/prepare` and
   `/download` overrides. WAV keeps its existing basic RIFF tags and skips lyrics.
+- Download confirmation in the web app. Clicking a video or audio download now
+  resolves the plan first and shows whether lyrics (audio) or subtitles and
+  captions (video) are available, together with the filename, quality and size.
+  The transfer only starts after **Confirm download**. Audio format cards also
+  show a **Lyrics** or **No lyrics** chip based on the real extraction result,
+  next to **Cover art** / **No cover**, instead of a generic "when available"
+  badge.
 - Desktop-parity format catalogue in the Android app. The picker now shows up to
   three codec families per height (H.264, H.265, AV1, VP9) with fps, HDR and
   Portrait badges, estimated file sizes, a starred 1080p H.264 suggestion and

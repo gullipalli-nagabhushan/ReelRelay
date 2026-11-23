@@ -32,6 +32,32 @@ logger = logging.getLogger(__name__)
 MAX_LYRICS = 15_000
 SEARCH_URL = "https://lrclib.net/api/search"
 
+# Sources returned by ``probe``. The UI uses these instead of guessing why a
+# download has no lyrics.
+SOURCE_DESCRIPTION = "description"
+SOURCE_LRCLIB = "lrclib"
+SOURCE_NONE = "none"
+SOURCE_DISABLED = "disabled"
+SOURCE_NOT_MUSIC = "not-music"
+SOURCE_UNKNOWN = "unknown"
+SOURCE_NOT_EMBEDDED = "not-embedded"
+SOURCE_UNSUPPORTED = "unsupported"
+SOURCE_VIDEO = "video"
+SOURCE_ERROR = "error"
+
+_LABELS = {
+    SOURCE_DESCRIPTION: "Lyrics found in the video description.",
+    SOURCE_LRCLIB: "Lyrics matched on LRCLIB.",
+    SOURCE_NONE: "No lyrics found for this track.",
+    SOURCE_DISABLED: "Lyrics lookup is turned off.",
+    SOURCE_NOT_MUSIC: "Lyrics are only looked up for music videos.",
+    SOURCE_UNKNOWN: "Lyrics were not looked up because the artist or title is unknown.",
+    SOURCE_NOT_EMBEDDED: "No tags or lyrics will be added.",
+    SOURCE_UNSUPPORTED: "This format cannot store lyrics.",
+    SOURCE_VIDEO: "Video downloads do not embed lyrics.",
+    SOURCE_ERROR: "Lyrics lookup failed; the download will continue without lyrics.",
+}
+
 # A heading is a line that is only "Lyrics", "Official Lyrics", "Lyrics:".
 _HEADING = re.compile(
     r"^\s*(?:official\s+)?(?:song\s+)?lyrics?\s*[-–—:：]?\s*$", re.IGNORECASE
@@ -333,27 +359,75 @@ def _is_music(info: dict[str, Any], tags: dict[str, str]) -> bool:
 
 def lookup(info: dict[str, Any], tags: dict[str, str], duration: int) -> str:
     """Lyrics for a download: description first, then LRCLIB when enabled."""
+    return probe(info, tags, duration)[0]
+
+
+def probe(
+    info: dict[str, Any], tags: dict[str, str], duration: int
+) -> tuple[str, str]:
+    """Return ``(lyrics, source)`` so a caller can explain what happened.
+
+    ``source`` is one of the ``SOURCE_*`` constants. An empty string is paired
+    with a reason such as ``disabled``, ``not-music``, ``unknown`` or ``none``,
+    which lets the download confirmation tell the user whether lyrics exist
+    instead of silently embedding nothing.
+    """
     text = from_description(info)
     if text:
         logger.info("Lyrics taken from the description (%d characters)", len(text))
-        return text
+        return text, SOURCE_DESCRIPTION
 
-    if not config.LYRICS_LOOKUP or not _is_music(info, tags):
-        return ""
+    if not config.LYRICS_LOOKUP:
+        return "", SOURCE_DISABLED
+    if not _is_music(info, tags):
+        return "", SOURCE_NOT_MUSIC
 
     artist = tags.get("artist", "").strip()
     title = tags.get("title", "").strip()
     if not artist or not title:
-        return ""
+        return "", SOURCE_UNKNOWN
     if artist.casefold() in {"unknown artist", "unknown creator"}:
-        return ""
+        return "", SOURCE_UNKNOWN
     if title.casefold() in {"unknown title", "untitled"}:
-        return ""
+        return "", SOURCE_UNKNOWN
 
     text = from_lrclib(artist, title, tags.get("album", ""), max(0, int(duration)))
     if text:
         logger.info("Lyrics matched on LRCLIB (%d characters)", len(text))
-    return text
+        return text, SOURCE_LRCLIB
+    return "", SOURCE_NONE
+
+
+def describe(
+    source: str,
+    *,
+    text: str = "",
+    embedded: bool | None = None,
+    detail: str = "",
+) -> dict[str, Any]:
+    """Turn a lookup result into a small, UI-friendly status object.
+
+    ``text`` is only used for length and availability; the lyrics themselves
+    never go into the confirmation response. ``embedded`` is ``None`` when the
+    caller only wants to show availability (the format cards), ``True`` when the
+    lyrics will be written into the file, and ``False`` when the chosen format
+    cannot store them.
+    """
+    available = bool(text)
+    label = detail or _LABELS.get(source, "Lyrics status is unknown.")
+    if available and source in (SOURCE_DESCRIPTION, SOURCE_LRCLIB):
+        label = _LABELS[source]
+        if embedded is True:
+            label += " They will be embedded in this file."
+        elif embedded is False:
+            label += " This file cannot store them."
+    return {
+        "status": source,
+        "available": available,
+        "embedded": bool(available and embedded is True),
+        "characters": len(text),
+        "label": label,
+    }
 
 
 def clear_cache() -> None:

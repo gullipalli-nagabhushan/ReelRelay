@@ -231,6 +231,10 @@ def test_plan_audio_embeds_lyrics_from_the_description(
 
     assert plan.tags["lyrics"].startswith("[Verse 1]")
     assert "Lyrics are embedded." in plan.notes
+    assert plan.lyrics["status"] == "description"
+    assert plan.lyrics["available"] is True
+    assert plan.lyrics["embedded"] is True
+    assert plan.summary()["lyrics"]["embedded"] is True
 
 
 def test_unchanged_year_keeps_the_full_release_date(
@@ -257,6 +261,40 @@ def test_wav_skips_lyrics(sample_info: dict, ffmpeg_enabled: None) -> None:
     plan = build_plan(sample_info, kind="audio", profile="wav")
 
     assert "lyrics" not in plan.tags
+    assert plan.lyrics["status"] == "unsupported"
+    assert plan.lyrics["available"] is False
+
+
+def test_plan_audio_original_reports_no_lyrics(sample_info: dict) -> None:
+    plan = build_plan(sample_info, kind="audio", profile="original", format_id="140")
+
+    assert plan.lyrics["status"] == "not-embedded"
+    assert plan.lyrics["available"] is False
+    assert "no tags or lyrics" in plan.lyrics["label"].lower()
+
+
+def test_plan_audio_reports_when_tags_are_off(
+    sample_info: dict, ffmpeg_enabled: None
+) -> None:
+    plan = build_plan(sample_info, kind="audio", profile="mp3_320", embed_tags=False)
+
+    assert plan.lyrics["status"] == "not-embedded"
+    assert "lyrics" not in plan.tags
+
+
+def test_plan_reports_subtitles_for_video(
+    sample_info: dict, ffmpeg_enabled: None
+) -> None:
+    sample_info["subtitles"] = {"en": [{"ext": "vtt"}]}
+    sample_info["automatic_captions"] = {"hi": [{"ext": "vtt"}], "live_chat": []}
+
+    plan = build_plan(sample_info, kind="video", option_id="v1080-h264-mp4")
+
+    assert plan.lyrics["status"] == "video"
+    assert plan.captions["has_any"] is True
+    assert plan.captions["manual_count"] == 1
+    assert plan.captions["automatic_count"] == 1
+    assert "Manual subtitles: English" in plan.summary()["captions"]["label"]
 
 
 def test_metadata_args_keep_lyrics_and_bound_other_fields() -> None:

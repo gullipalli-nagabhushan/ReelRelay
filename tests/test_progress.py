@@ -140,3 +140,19 @@ def test_elapsed_keeps_counting_when_streaming_begins() -> None:
     snapshot = registry.get("elapsed")
     assert snapshot["elapsed"] >= 4.5
     assert snapshot["state"] == "streaming"
+
+
+def test_restart_clears_time_spent_on_the_confirmation_dialog() -> None:
+    registry = ProgressRegistry()
+    registry.create("confirm", "clip.mp4", 100)
+    registry.begin("confirm", 100)
+    registry.update("confirm", 50, 100)
+    with registry._lock:
+        registry._entries["confirm"]["started_at"] = time.time() - 30.0
+
+    registry.create("confirm", "clip.mp4", 100, restart=True)
+
+    snapshot = registry.get("confirm")
+    assert snapshot["state"] == "preparing"
+    assert snapshot["sent"] == 0
+    assert snapshot["elapsed"] < 1.0

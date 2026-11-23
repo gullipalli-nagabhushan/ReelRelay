@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from core.ytdlp import normalize_metadata, build_view
+from core import lyrics
+from core.ytdlp import build_view, caption_summary, normalize_metadata
 
 
 def test_derives_artist_song_composer_and_year(sample_info: dict) -> None:
@@ -157,3 +158,52 @@ def test_view_exposes_the_full_tag_set(sample_info: dict) -> None:
         "publisher": "RCA Records",
         "isrc": "GBARL9300135",
     }
+
+
+def test_view_reports_lyrics_from_the_description(sample_info: dict) -> None:
+    sample_info["description"] = (
+        "Lyrics:\n"
+        "[Verse 1]\n"
+        "We're no strangers to love\n"
+        "You know the rules and so do I\n"
+        "A full commitment's what I'm thinking of\n"
+    )
+
+    view = build_view(sample_info)
+
+    assert view["lyrics"]["available"] is True
+    assert view["lyrics"]["status"] == lyrics.SOURCE_DESCRIPTION
+    assert "description" in view["lyrics"]["label"].lower()
+
+
+def test_view_reports_no_lyrics_when_the_lookup_is_off(sample_info: dict) -> None:
+    view = build_view(sample_info)
+
+    assert view["lyrics"]["available"] is False
+    assert view["lyrics"]["status"] == lyrics.SOURCE_DISABLED
+
+
+def test_caption_summary_deduplicates_and_names_languages() -> None:
+    summary = caption_summary(
+        {
+            "subtitles": {"en": [], "en-orig": [], "live_chat": []},
+            "automatic_captions": {"a.en": [], "hi": [], "te": []},
+        }
+    )
+
+    assert summary["manual"] == [{"code": "en", "name": "English"}]
+    assert summary["manual_count"] == 1
+    assert summary["automatic_count"] == 2
+    assert [item["name"] for item in summary["automatic"]] == ["Hindi", "Telugu"]
+    assert summary["has_any"] is True
+    assert "Manual subtitles: English" in summary["label"]
+    assert "Auto-generated captions: Hindi, Telugu" in summary["label"]
+
+
+def test_caption_summary_handles_no_tracks() -> None:
+    summary = caption_summary({})
+
+    assert summary["manual"] == []
+    assert summary["automatic"] == []
+    assert summary["has_any"] is False
+    assert summary["label"] == "No subtitles or captions found."

@@ -327,6 +327,11 @@
                             {% for badge in option.badges %}
                             <span class="chip">{{ badge }}</span>
                             {% endfor %}
+                            {% if media.lyrics.available and option.profile in ('mp3_320', 'mp3_192', 'm4a_256', 'flac') %}
+                            <span class="chip">Lyrics</span>
+                            {% else %}
+                            <span class="chip chip-muted">No lyrics</span>
+                            {% endif %}
                             {% if not option.cover %}<span class="chip chip-muted">No cover</span>{% endif %}
                         </div>
                         <div class="audio-foot">
@@ -376,32 +381,62 @@
 </section>
 
 <div class="download-overlay" id="downloadOverlay" hidden>
-    <div class="download-panel" role="dialog" aria-modal="true" aria-labelledby="downloadTitle">
-        <div class="spinner-ring"></div>
-        <p class="download-eyebrow" id="downloadEyebrow"><i class="bi bi-cloud-arrow-down"></i> Preparing download</p>
-        <h2 id="downloadTitle">Getting things ready…</h2>
-        <p class="download-detail" id="downloadDetail">Resolving the media stream.</p>
-        <div class="download-progress is-indeterminate" id="downloadProgress"
-             role="progressbar" aria-valuemin="0" aria-valuemax="100">
-            <span id="downloadBar"></span>
-        </div>
-        <div class="download-metrics">
-            <span id="downloadPercent">—</span>
-            <span id="downloadSize">—</span>
-            <span id="downloadSpeed">—</span>
-        </div>
-        <p class="download-elapsed">
-            <span id="downloadElapsed">0:00</span> elapsed ·
-            <span id="downloadEta">estimating…</span>
-        </p>
-        <a id="downloadFallback" class="download-fallback" href="#" hidden>
-            Nothing happened? Start the download manually
-        </a>
-        <div class="download-actions">
-            <a id="downloadSave" class="btn btn-soft" href="#" hidden>
-                <i class="bi bi-download"></i> Save again
+    <div class="download-panel" id="downloadPanel" role="dialog" aria-modal="true" aria-label="Download">
+        <div class="download-progress-group" id="downloadProgressGroup">
+            <div class="spinner-ring"></div>
+            <p class="download-eyebrow" id="downloadEyebrow"><i class="bi bi-cloud-arrow-down"></i> Preparing download</p>
+            <h2 id="downloadTitle">Getting things ready…</h2>
+            <p class="download-detail" id="downloadDetail">Resolving the media stream.</p>
+            <div class="download-progress is-indeterminate" id="downloadProgress"
+                 role="progressbar" aria-valuemin="0" aria-valuemax="100">
+                <span id="downloadBar"></span>
+            </div>
+            <div class="download-metrics">
+                <span id="downloadPercent">—</span>
+                <span id="downloadSize">—</span>
+                <span id="downloadSpeed">—</span>
+            </div>
+            <p class="download-elapsed">
+                <span id="downloadElapsed">0:00</span> elapsed ·
+                <span id="downloadEta">estimating…</span>
+            </p>
+            <a id="downloadFallback" class="download-fallback" href="#" hidden>
+                Nothing happened? Start the download manually
             </a>
-            <button type="button" class="btn btn-ghost" id="downloadDismiss">Close</button>
+            <div class="download-actions">
+                <a id="downloadSave" class="btn btn-soft" href="#" hidden>
+                    <i class="bi bi-download"></i> Save again
+                </a>
+                <button type="button" class="btn btn-ghost" id="downloadDismiss">Close</button>
+            </div>
+        </div>
+
+        <div class="download-confirm" id="downloadConfirm" hidden>
+            <p class="download-eyebrow"><i class="bi bi-check2-square"></i> Confirm download</p>
+            <h2 id="confirmTitle">Ready to download</h2>
+            <p class="download-detail" id="confirmDetail"></p>
+            <ul class="confirm-facts" id="confirmFacts">
+                <li id="confirmLyricsRow" class="confirm-fact" hidden>
+                    <i class="bi bi-music-note-beamed" aria-hidden="true"></i>
+                    <div>
+                        <strong>Lyrics</strong>
+                        <span id="confirmLyricsText"></span>
+                    </div>
+                </li>
+                <li id="confirmCaptionsRow" class="confirm-fact" hidden>
+                    <i class="bi bi-badge-cc" aria-hidden="true"></i>
+                    <div>
+                        <strong>Subtitles &amp; captions</strong>
+                        <span id="confirmCaptionsText"></span>
+                    </div>
+                </li>
+            </ul>
+            <div class="download-actions confirm-actions">
+                <button type="button" class="btn btn-primary" id="confirmStart">
+                    <i class="bi bi-download"></i> Confirm download
+                </button>
+                <button type="button" class="btn btn-ghost" id="confirmCancel">Cancel</button>
+            </div>
         </div>
     </div>
 </div>
@@ -415,6 +450,7 @@
 
         const videoUrl = shell.dataset.videoUrl;
         const overlay = document.getElementById('downloadOverlay');
+        const progressGroup = document.getElementById('downloadProgressGroup');
         const progressWrap = document.getElementById('downloadProgress');
         const progressBar = document.getElementById('downloadBar');
         const titleEl = document.getElementById('downloadTitle');
@@ -428,6 +464,15 @@
         const fallbackEl = document.getElementById('downloadFallback');
         const saveEl = document.getElementById('downloadSave');
         const dismissBtn = document.getElementById('downloadDismiss');
+        const confirmEl = document.getElementById('downloadConfirm');
+        const confirmTitle = document.getElementById('confirmTitle');
+        const confirmDetail = document.getElementById('confirmDetail');
+        const confirmLyricsRow = document.getElementById('confirmLyricsRow');
+        const confirmLyricsText = document.getElementById('confirmLyricsText');
+        const confirmCaptionsRow = document.getElementById('confirmCaptionsRow');
+        const confirmCaptionsText = document.getElementById('confirmCaptionsText');
+        const confirmStart = document.getElementById('confirmStart');
+        const confirmCancel = document.getElementById('confirmCancel');
         const player = document.getElementById('inlinePreview');
         const previewFallback = document.getElementById('previewFallback');
 
@@ -529,8 +574,10 @@
         function resetOverlay() {
             if (overlay) {
                 overlay.hidden = true;
-                overlay.classList.remove('is-done', 'is-error');
+                overlay.classList.remove('is-done', 'is-error', 'is-confirm');
             }
+            if (progressGroup) progressGroup.hidden = false;
+            if (confirmEl) confirmEl.hidden = true;
             setProgress(null);
             if (percentEl) percentEl.textContent = '—';
             if (sizeEl) sizeEl.textContent = '—';
@@ -560,9 +607,11 @@
             startedAt = Date.now();
             if (autoHide) { clearTimeout(autoHide); autoHide = null; }
             if (overlay) {
-                overlay.classList.remove('is-done', 'is-error');
+                overlay.classList.remove('is-done', 'is-error', 'is-confirm');
                 overlay.hidden = false;
             }
+            if (confirmEl) confirmEl.hidden = true;
+            if (progressGroup) progressGroup.hidden = false;
             if (titleEl) titleEl.textContent = button.dataset.label || 'Preparing download';
             if (detailEl) detailEl.textContent = 'Starting ' + (button.dataset.size || 'the download') + ' · ' + (button.dataset.quality || '');
             if (eyebrowEl) eyebrowEl.innerHTML = '<i class="bi bi-cloud-arrow-down"></i> Preparing download';
@@ -577,6 +626,88 @@
                 if (!elapsedEl) return;
                 elapsedEl.textContent = formatClock((Date.now() - startedAt) / 1000);
             }, 1000);
+        }
+
+        function setConfirmFact(row, textEl, message, ok) {
+            if (!row || !textEl) return;
+            row.hidden = false;
+            row.classList.toggle('is-ok', Boolean(ok));
+            textEl.textContent = message || '';
+        }
+
+        function showConfirm(data, button) {
+            const plan = (data && data.plan) || {};
+            downloadUrl = data && data.download_url ? data.download_url : null;
+            if (!downloadUrl || !overlay) return false;
+
+            lastButton = button;
+            busy = true;
+            startedAt = Date.now();
+            if (autoHide) { clearTimeout(autoHide); autoHide = null; }
+            if (confirmEl) confirmEl.hidden = false;
+            if (progressGroup) progressGroup.hidden = true;
+            overlay.classList.remove('is-done', 'is-error');
+            overlay.classList.add('is-confirm');
+            overlay.hidden = false;
+
+            if (confirmTitle) {
+                confirmTitle.textContent = plan.filename || button.dataset.label || 'Ready to download';
+            }
+            if (confirmDetail) {
+                const parts = [plan.label, plan.quality, plan.size_label].filter(Boolean);
+                confirmDetail.textContent = parts.length
+                    ? parts.join(' · ')
+                    : 'Choose confirm to start the download.';
+            }
+
+            const lyrics = plan.lyrics || {};
+            const captions = plan.captions || {};
+            if (plan.kind === 'audio' && confirmLyricsRow) {
+                setConfirmFact(
+                    confirmLyricsRow,
+                    confirmLyricsText,
+                    lyrics.label || 'Lyrics status is unknown.',
+                    Boolean(lyrics.embedded)
+                );
+            } else if (confirmLyricsRow) {
+                confirmLyricsRow.hidden = true;
+            }
+
+            if (plan.kind === 'video' && confirmCaptionsRow) {
+                let captionText = captions.label || 'No subtitles or captions found.';
+                if (captions.has_any) {
+                    captionText += ' The video is downloaded as-is; captions are not burned in.';
+                }
+                setConfirmFact(
+                    confirmCaptionsRow,
+                    confirmCaptionsText,
+                    captionText,
+                    Boolean(captions.has_any)
+                );
+            } else if (confirmCaptionsRow) {
+                confirmCaptionsRow.hidden = true;
+            }
+            return true;
+        }
+
+        function beginDownload() {
+            if (!downloadUrl || !lastButton) {
+                hideOverlay();
+                return;
+            }
+            const button = lastButton;
+            showOverlay(button);
+            if (titleEl) titleEl.textContent = button.dataset.label || 'Download';
+            if (eyebrowEl) eyebrowEl.innerHTML = '<i class="bi bi-cloud-arrow-down"></i> Download started';
+            if (detailEl) {
+                detailEl.textContent = 'Your browser is receiving the file. Keep this tab open.';
+            }
+            if (fallbackEl) {
+                fallbackEl.href = downloadUrl;
+                fallbackEl.hidden = false;
+            }
+            triggerDownload(downloadUrl);
+            pollProgress();
         }
 
         function buildParams(button) {
@@ -750,35 +881,51 @@
             pollTimer = setTimeout(pollProgress, 500);
         }
 
-        function startDownload(button) {
+        async function startDownload(button) {
             if (busy) return;
             token = newToken();
+            const requestToken = token;
             misses = 0;
+            downloadUrl = null;
             showOverlay(button);
-
-            // Build the streaming URL and start it synchronously. This keeps
-            // the download inside the user's click gesture (no async prepare
-            // round-trip that some browsers treat as a pop-up/download block).
-            const params = buildParams(button);
-            downloadUrl = '/download?' + params.toString();
-
-            if (titleEl) titleEl.textContent = button.dataset.label || 'Download';
-            if (eyebrowEl) eyebrowEl.innerHTML = '<i class="bi bi-cloud-arrow-down"></i> Download started';
+            if (titleEl) titleEl.textContent = 'Checking this download…';
+            if (eyebrowEl) eyebrowEl.innerHTML = '<i class="bi bi-search"></i> Checking extras';
             if (detailEl) {
-                detailEl.textContent = 'Your browser is receiving the file. Keep this tab open.';
+                detailEl.textContent = 'Looking for lyrics, subtitles and the best stream.';
             }
-            if (fallbackEl) {
-                fallbackEl.href = downloadUrl;
-                fallbackEl.hidden = false;
-            }
+            setProgress(null);
 
-            triggerDownload(downloadUrl);
-            pollProgress();
+            try {
+                const params = buildParams(button);
+                const response = await fetch('/api/prepare?' + params.toString(), {
+                    headers: { 'Accept': 'application/json' },
+                    cache: 'no-store'
+                });
+                let data = {};
+                try {
+                    data = await response.json();
+                } catch (error) {
+                    data = {};
+                }
+                if (requestToken !== token) return;
+                if (!response.ok || !data.ok) {
+                    throw new Error(data.error || 'Could not prepare this download.');
+                }
+                if (!showConfirm(data, button)) {
+                    throw new Error('Could not prepare this download.');
+                }
+            } catch (error) {
+                if (requestToken !== token) return;
+                finishError(error && error.message ? error.message : 'Could not prepare this download.');
+            }
         }
 
         document.querySelectorAll('.download-trigger').forEach((button) => {
             button.addEventListener('click', () => startDownload(button));
         });
+
+        if (confirmStart) confirmStart.addEventListener('click', beginDownload);
+        if (confirmCancel) confirmCancel.addEventListener('click', hideOverlay);
 
         if (player) {
             player.addEventListener('error', () => {

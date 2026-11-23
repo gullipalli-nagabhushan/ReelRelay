@@ -21,7 +21,7 @@ if load_dotenv is not None:
 logger = logging.getLogger(__name__)
 
 APP_NAME = "ReelRelay"
-APP_VERSION = "3.2.0"
+APP_VERSION = "3.3.0"
 APP_TAGLINE = "YouTube · Instagram · Facebook, straight to your device"
 
 

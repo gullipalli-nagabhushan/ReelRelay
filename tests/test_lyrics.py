@@ -248,3 +248,91 @@ def test_from_lrclib_does_not_retry_after_a_network_failure(
 
     assert lyrics.from_lrclib("Lady Gaga", "Die With A Smile", "", 251) == ""
     assert len(calls) == 1
+
+
+def test_probe_reports_description_as_the_source() -> None:
+    text, source = lyrics.probe(
+        {"description": LYRICS_DESCRIPTION},
+        {"artist": "Rick Astley", "title": "Never Gonna Give You Up"},
+        213,
+    )
+
+    assert text.startswith("[Verse 1]")
+    assert source == lyrics.SOURCE_DESCRIPTION
+
+
+def test_probe_explains_a_disabled_lookup() -> None:
+    text, source = lyrics.probe(
+        {"categories": ["Music"]}, {"artist": "A", "title": "T"}, 200
+    )
+
+    assert text == ""
+    assert source == lyrics.SOURCE_DISABLED
+
+
+def test_probe_skips_non_music_without_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(config, "LYRICS_LOOKUP", True)
+    monkeypatch.setattr(lyrics, "_search", lambda params: pytest.fail("network used"))
+
+    text, source = lyrics.probe(
+        {"categories": ["Gaming"], "description": "No lyrics here."},
+        {"artist": "A", "title": "T"},
+        200,
+    )
+
+    assert text == ""
+    assert source == lyrics.SOURCE_NOT_MUSIC
+
+
+def test_probe_reports_no_match(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(config, "LYRICS_LOOKUP", True)
+    monkeypatch.setattr(lyrics, "_search", lambda params: [])
+
+    text, source = lyrics.probe(
+        {"categories": ["Music"]}, {"artist": "A", "title": "T"}, 200
+    )
+
+    assert text == ""
+    assert source == lyrics.SOURCE_NONE
+
+
+def test_probe_reports_lrclib_as_the_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(config, "LYRICS_LOOKUP", True)
+    monkeypatch.setattr(lyrics, "_search", lambda params: [GOOD_RECORD])
+
+    text, source = lyrics.probe(
+        {"description": "Official music video.", "categories": ["Music"]},
+        {"artist": "Lady Gaga, Bruno Mars", "title": "Die With A Smile"},
+        252,
+    )
+
+    assert text.startswith("I, I just woke up")
+    assert source == lyrics.SOURCE_LRCLIB
+
+
+def test_describe_marks_embedded_lyrics() -> None:
+    status = lyrics.describe(
+        lyrics.SOURCE_DESCRIPTION, text="la la la", embedded=True
+    )
+
+    assert status["available"] is True
+    assert status["embedded"] is True
+    assert status["characters"] == 8
+    assert "embedded" in status["label"].lower()
+
+
+def test_describe_leaves_availability_open_for_format_cards() -> None:
+    status = lyrics.describe(lyrics.SOURCE_LRCLIB, text="la la la")
+
+    assert status["available"] is True
+    assert status["embedded"] is False
+    assert "cannot store" not in status["label"].lower()
+
+
+def test_describe_uses_a_custom_detail() -> None:
+    status = lyrics.describe(
+        lyrics.SOURCE_UNSUPPORTED, detail="WAV has no lyrics field."
+    )
+
+    assert status["available"] is False
+    assert status["label"] == "WAV has no lyrics field."

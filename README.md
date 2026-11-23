@@ -36,7 +36,7 @@ the platform's CDN or piped from ffmpeg's stdout directly into the HTTP
 response. The only lasting file is the ordinary browser download chosen by the
 user.
 
-**Version:** 3.2.0 · **Status:** actively maintained · **License:** MIT
+**Version:** 3.3.0 · **Status:** actively maintained · **License:** MIT
 
 <p align="center">
   <img src="docs/screenshot.png" alt="ReelRelay landing page showing the search box, 8K badge and example videos" width="100%">
@@ -450,6 +450,14 @@ WAV has no lyrics field and keeps only its basic RIFF INFO tags. Lyrics keep
 their line breaks and are bounded to 15,000 characters; other tag values are
 trimmed to 240. The "Original stream" audio option stays byte-for-byte untouched
 and gets no tags.
+
+The preview page runs the same lookup before a download starts. Each audio card
+shows **Lyrics** when a block or LRCLIB match exists and **No lyrics** otherwise,
+next to **Cover art** / **No cover**. Clicking a download opens a confirmation
+panel with the filename, quality, size and the lyrics or subtitle/caption status;
+nothing is streamed until **Confirm download** is pressed. Video links list
+manual subtitles and auto-generated captions, but captions are not burned into
+the file.
 
 ### Concurrency and caching
 

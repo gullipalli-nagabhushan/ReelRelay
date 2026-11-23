@@ -510,7 +510,9 @@ async def download(
 
     token = (token or "").strip()[:64]
     if token:
-        progress.create(token)
+        # /api/prepare created this token while the user read the confirmation
+        # dialog. Restart the clock now that the transfer is really starting.
+        progress.create(token, restart=True)
 
     if not _acquire_slot():
         if token:

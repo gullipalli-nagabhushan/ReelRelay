@@ -25,6 +25,7 @@ from .ytdlp import (
     audio_mime,
     build_audio_options,
     build_video_options,
+    caption_summary,
     find_audio_format,
     find_video_format,
     normalize_metadata,
@@ -94,6 +95,10 @@ class DownloadPlan:
     embed_cover: bool = False
     cover_urls: list[str] = field(default_factory=list)
 
+    # What the confirmation dialog should tell the user about extras.
+    lyrics: dict[str, Any] = field(default_factory=dict)
+    captions: dict[str, Any] = field(default_factory=dict)
+
     def summary(self) -> dict[str, Any]:
         return {
             "filename": self.filename,
@@ -105,6 +110,8 @@ class DownloadPlan:
             "mode": self.mode,
             "notes": self.notes,
             "estimated_total": self.estimated_total,
+            "lyrics": self.lyrics,
+            "captions": self.captions,
         }
 
 
@@ -511,6 +518,10 @@ def plan_audio(
             profile="original",
             audio_format=source,
             cover_urls=cover_urls,
+            lyrics=lyrics.describe(
+                lyrics.SOURCE_NOT_EMBEDDED,
+                detail="The original stream is sent untouched, so no tags or lyrics are added.",
+            ),
         )
 
     definition = AUDIO_PROFILES.get(profile)
@@ -535,15 +546,29 @@ def plan_audio(
 
     # WAV has no lyrics field, so asking for them there would only cost a
     # request. MP3, FLAC and M4A get USLT / LYRICS / ©lyr respectively.
-    if embed_tags and tags_supported and definition["ext"] != "wav":
-        try:
-            found_lyrics = lyrics.lookup(info, tags, duration)
-        except Exception:  # noqa: BLE001 - lyrics are optional
-            logger.exception("Lyrics lookup failed; continuing without lyrics")
-            found_lyrics = ""
-        if found_lyrics:
-            tags["lyrics"] = found_lyrics
-            notes.append("Lyrics are embedded.")
+    lyrics_status = lyrics.describe(
+        lyrics.SOURCE_NOT_EMBEDDED,
+        detail="Tag embedding is off, so no tags or lyrics are added.",
+    )
+    if embed_tags and tags_supported:
+        if definition["ext"] == "wav":
+            lyrics_status = lyrics.describe(
+                lyrics.SOURCE_UNSUPPORTED,
+                detail="WAV has no lyrics field, so lyrics are not added.",
+            )
+        else:
+            try:
+                found_lyrics, lyrics_source = lyrics.probe(info, tags, duration)
+            except Exception:  # noqa: BLE001 - lyrics are optional
+                logger.exception("Lyrics lookup failed; continuing without lyrics")
+                lyrics_status = lyrics.describe(lyrics.SOURCE_ERROR)
+            else:
+                if found_lyrics:
+                    tags["lyrics"] = found_lyrics
+                    notes.append("Lyrics are embedded.")
+                lyrics_status = lyrics.describe(
+                    lyrics_source, text=found_lyrics, embedded=bool(found_lyrics)
+                )
 
     if from_video:
         notes.append("This link has no standalone audio stream, so the audio track is extracted from the video.")
@@ -575,6 +600,7 @@ def plan_audio(
         embed_tags=bool(embed_tags and tags_supported),
         embed_cover=bool(embed_cover and cover_supported),
         cover_urls=cover_urls,
+        lyrics=lyrics_status,
     )
 
 
@@ -825,17 +851,18 @@ def build_plan(
     embed_cover: bool = True,
 ) -> DownloadPlan:
     if kind == "video":
-        return plan_video(
+        plan = plan_video(
             info,
             option_id=option_id,
             height=height,
             container=container,
             tags_override=tags,
         )
-    if kind == "audio":
+        plan.lyrics = lyrics.describe(lyrics.SOURCE_VIDEO)
+    elif kind == "audio":
         if not profile:
             profile = "mp3_320"
-        return plan_audio(
+        plan = plan_audio(
             info,
             profile=profile,
             format_id=format_id,
@@ -843,4 +870,10 @@ def build_plan(
             embed_tags=embed_tags,
             embed_cover=embed_cover,
         )
-    raise UnavailableError("Unknown download type.")
+    else:
+        raise UnavailableError("Unknown download type.")
+
+    # Subtitles are not burned into either output, but the confirmation dialog
+    # should still say whether the source has them.
+    plan.captions = caption_summary(info)
+    return plan

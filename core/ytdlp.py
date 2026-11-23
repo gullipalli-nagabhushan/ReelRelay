@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlunparse
 
 import yt_dlp
 
-from . import config
+from . import config, lyrics
 from .utils import clean_text, compact_number, human_duration, human_size
 
 logger = logging.getLogger(__name__)
@@ -679,6 +679,140 @@ def _tag_index(number: str, total: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# Subtitle / caption availability
+# --------------------------------------------------------------------------- #
+
+# Caption keys that are not spoken subtitles and would only confuse the UI.
+_SKIP_CAPTIONS = {
+    "live_chat",
+    "live_chat_replay",
+    "rechat",
+    "danmaku",
+    "comments",
+    "storyboard",
+}
+
+_CAPTION_NAMES = {
+    "af": "Afrikaans",
+    "ar": "Arabic",
+    "bg": "Bulgarian",
+    "bn": "Bengali",
+    "cs": "Czech",
+    "da": "Danish",
+    "de": "German",
+    "el": "Greek",
+    "en": "English",
+    "es": "Spanish",
+    "et": "Estonian",
+    "fa": "Persian",
+    "fi": "Finnish",
+    "fil": "Filipino",
+    "fr": "French",
+    "gu": "Gujarati",
+    "he": "Hebrew",
+    "hi": "Hindi",
+    "hr": "Croatian",
+    "hu": "Hungarian",
+    "id": "Indonesian",
+    "it": "Italian",
+    "ja": "Japanese",
+    "kn": "Kannada",
+    "ko": "Korean",
+    "lt": "Lithuanian",
+    "lv": "Latvian",
+    "ml": "Malayalam",
+    "mr": "Marathi",
+    "ms": "Malay",
+    "nl": "Dutch",
+    "no": "Norwegian",
+    "pa": "Punjabi",
+    "pl": "Polish",
+    "pt": "Portuguese",
+    "ro": "Romanian",
+    "ru": "Russian",
+    "sk": "Slovak",
+    "sl": "Slovenian",
+    "sr": "Serbian",
+    "sv": "Swedish",
+    "sw": "Swahili",
+    "ta": "Tamil",
+    "te": "Telugu",
+    "th": "Thai",
+    "tr": "Turkish",
+    "uk": "Ukrainian",
+    "ur": "Urdu",
+    "vi": "Vietnamese",
+    "zh": "Chinese",
+}
+
+
+def _caption_name(code: str) -> str:
+    return _CAPTION_NAMES.get(code, code.upper())
+
+
+def _caption_codes(block: Any) -> list[str]:
+    """Base language codes from a yt-dlp ``subtitles``/``automatic_captions`` map.
+
+    Keys look like ``en``, ``en-orig``, ``a.en`` or ``zh-Hans``. They are
+    reduced to a base code so the UI does not list the same language four
+    times, and machine-readable tracks (live chat, storyboards) are dropped.
+    """
+    if not isinstance(block, dict):
+        return []
+    codes: list[str] = []
+    for raw in block:
+        code = str(raw or "").strip().lower()
+        if not code:
+            continue
+        base = code.split(".")[-1].split("-")[0]
+        if not base or base in _SKIP_CAPTIONS or base in codes:
+            continue
+        codes.append(base)
+    # Put English first, then alphabetical, so a long auto-caption list has a
+    # useful summary instead of a random sample.
+    return sorted(codes, key=lambda code: (code != "en", _caption_name(code)))
+
+
+def _caption_items(codes: list[str], limit: int = 8) -> list[dict[str, str]]:
+    return [{"code": code, "name": _caption_name(code)} for code in codes[:limit]]
+
+
+def _caption_phrase(codes: list[str], limit: int = 4) -> str:
+    names = [_caption_name(code) for code in codes[:limit]]
+    extra = len(codes) - len(names)
+    phrase = ", ".join(names)
+    if extra > 0:
+        phrase += f" (+{extra} more)"
+    return phrase
+
+
+def caption_summary(info: dict[str, Any]) -> dict[str, Any]:
+    """Summarise manual subtitles and auto-generated captions for confirmation."""
+    manual = _caption_codes(info.get("subtitles"))
+    automatic = [
+        code for code in _caption_codes(info.get("automatic_captions")) if code not in manual
+    ]
+
+    if manual:
+        label = f"Manual subtitles: {_caption_phrase(manual)}."
+        if automatic:
+            label += f" Auto-generated captions: {_caption_phrase(automatic)}."
+    elif automatic:
+        label = f"Auto-generated captions: {_caption_phrase(automatic)}."
+    else:
+        label = "No subtitles or captions found."
+
+    return {
+        "manual": _caption_items(manual),
+        "automatic": _caption_items(automatic),
+        "manual_count": len(manual),
+        "automatic_count": len(automatic),
+        "has_any": bool(manual or automatic),
+        "label": label,
+    }
+
+
+# --------------------------------------------------------------------------- #
 # Format catalog
 # --------------------------------------------------------------------------- #
 
@@ -1031,7 +1165,7 @@ AUDIO_PROFILES: dict[str, dict[str, Any]] = {
         "tags": True,
         "cover": True,
         "lossless": False,
-        "badges": ["Cover art", "Artist & composer", "Lyrics when available"],
+        "badges": ["Cover art", "Artist & composer"],
         "description": "Highest quality MP3 with full ID3 tags, lyrics when available, and the video cover art.",
     },
     "mp3_192": {
@@ -1042,7 +1176,7 @@ AUDIO_PROFILES: dict[str, dict[str, Any]] = {
         "tags": True,
         "cover": True,
         "lossless": False,
-        "badges": ["Cover art", "Artist & composer", "Lyrics when available"],
+        "badges": ["Cover art", "Artist & composer"],
         "description": "Balanced MP3 for phones and older players, with the same tags as 320 kbps.",
     },
     "m4a_256": {
@@ -1053,7 +1187,7 @@ AUDIO_PROFILES: dict[str, dict[str, Any]] = {
         "tags": True,
         "cover": False,
         "lossless": False,
-        "badges": ["AAC audio", "Artist & composer", "Lyrics when available"],
+        "badges": ["AAC audio", "Artist & composer"],
         "description": "AAC in an MP4 container — ideal for iPhone, iPad and macOS, with lyrics when available.",
     },
     "flac": {
@@ -1064,7 +1198,7 @@ AUDIO_PROFILES: dict[str, dict[str, Any]] = {
         "tags": True,
         "cover": True,
         "lossless": True,
-        "badges": ["Lossless", "Cover art", "Lyrics when available"],
+        "badges": ["Lossless", "Cover art"],
         "description": "Lossless FLAC with cover art, full tags and lyrics when available. Large, but pristine.",
     },
     "wav": {
@@ -1199,6 +1333,29 @@ def build_view(info: dict[str, Any]) -> dict[str, Any]:
     else:
         audio_source = "—"
 
+    tags = {
+        "title": metadata["song_title"],
+        "artist": metadata["artist"],
+        "album": metadata["album"],
+        "composer": metadata["composer"],
+        "year": metadata["year"],
+        "genre": metadata["genre"],
+        "track": _tag_index(metadata["track_number"], metadata["track_total"]),
+        "disc": _tag_index(metadata["disc_number"], metadata["disc_total"]),
+        "copyright": metadata["copyright"],
+        "publisher": metadata["publisher"],
+        "isrc": metadata["isrc"],
+    }
+    # The format cards need to know whether lyrics exist before the user
+    # downloads. LRCLIB results are cached, so the later /api/prepare call is
+    # free; non-music links never hit the network.
+    try:
+        lyrics_text, lyrics_source = lyrics.probe(info, tags, int(metadata["duration"] or 0))
+    except Exception:  # noqa: BLE001 - lyrics are optional
+        logger.exception("Lyrics probe failed for %s", metadata.get("url"))
+        lyrics_text, lyrics_source = "", lyrics.SOURCE_ERROR
+    lyrics_status = lyrics.describe(lyrics_source, text=lyrics_text)
+
     metadata.update(
         {
             "video_options": video_options,
@@ -1216,19 +1373,8 @@ def build_view(info: dict[str, Any]) -> dict[str, Any]:
             "preview_container": preview_option["container"] if preview_option else "",
             "preview_height": preview_option["height"] if preview_option else 0,
             "ffmpeg_ok": config.FFMPEG_OK,
-            "tags": {
-                "title": metadata["song_title"],
-                "artist": metadata["artist"],
-                "album": metadata["album"],
-                "composer": metadata["composer"],
-                "year": metadata["year"],
-                "genre": metadata["genre"],
-                "track": _tag_index(metadata["track_number"], metadata["track_total"]),
-                "disc": _tag_index(metadata["disc_number"], metadata["disc_total"]),
-                "copyright": metadata["copyright"],
-                "publisher": metadata["publisher"],
-                "isrc": metadata["isrc"],
-            },
+            "tags": tags,
+            "lyrics": lyrics_status,
         }
     )
     return metadata

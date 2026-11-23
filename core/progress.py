@@ -34,7 +34,14 @@ class ProgressRegistry:
         total: int | None = None,
         *,
         estimated: bool = False,
+        restart: bool = False,
     ) -> None:
+        """Create or update an entry.
+
+        ``restart`` is used when the browser has confirmed a prepared download:
+        the confirmation wait must not appear as transfer time, so the elapsed
+        clock and speed counters start again from this call.
+        """
         if not token:
             return
         now = time.time()
@@ -44,6 +51,17 @@ class ProgressRegistry:
             if existing:
                 # A retry reuses the token: keep the original start time so the
                 # elapsed counter tells the truth across reconnects.
+                if restart:
+                    existing.update(
+                        {
+                            "started_at": now,
+                            "sent": 0,
+                            "first_byte_at": None,
+                            "last_sent": 0,
+                            "last_at": 0.0,
+                            "speed": 0.0,
+                        }
+                    )
                 existing.update(
                     {
                         "filename": filename or existing.get("filename", ""),

@@ -64,6 +64,68 @@ def test_preview_tag_editor_lists_the_extra_fields(
     assert "LRCLIB" in body
 
 
+def test_preview_audio_cards_show_a_lyrics_chip(
+    client: TestClient, sample_info: dict
+) -> None:
+    sample_info["description"] = (
+        "Lyrics:\n"
+        "[Verse 1]\n"
+        "We're no strangers to love\n"
+        "You know the rules and so do I\n"
+        "A full commitment's what I'm thinking of\n"
+    )
+
+    body = client.post("/preview", data={"media_url": URL}).text
+
+    assert '<span class="chip">Lyrics</span>' in body
+    assert "Lyrics when available" not in body
+
+
+def test_preview_audio_cards_show_no_lyrics(client: TestClient) -> None:
+    body = client.post("/preview", data={"media_url": URL}).text
+
+    assert '<span class="chip chip-muted">No lyrics</span>' in body
+    assert '<span class="chip">Lyrics</span>' not in body
+
+
+def test_preview_has_a_download_confirmation_step(client: TestClient) -> None:
+    body = client.post("/preview", data={"media_url": URL}).text
+
+    for marker in (
+        'id="downloadConfirm"',
+        'id="confirmStart"',
+        'id="confirmCancel"',
+        'id="confirmLyricsRow"',
+        'id="confirmCaptionsRow"',
+        "Confirm download",
+    ):
+        assert marker in body
+
+
+def test_api_prepare_reports_lyrics_and_captions(
+    client: TestClient, sample_info: dict
+) -> None:
+    sample_info["description"] = (
+        "Lyrics:\n"
+        "[Verse 1]\n"
+        "We're no strangers to love\n"
+        "You know the rules and so do I\n"
+        "A full commitment's what I'm thinking of\n"
+    )
+    sample_info["subtitles"] = {"en": [{"ext": "vtt"}]}
+
+    payload = client.get(
+        "/api/prepare",
+        params={"url": URL, "kind": "audio", "profile": "flac"},
+    ).json()
+
+    plan = payload["plan"]
+    assert plan["lyrics"]["available"] is True
+    assert plan["lyrics"]["status"] == "description"
+    assert plan["captions"]["manual_count"] == 1
+    assert plan["captions"]["manual"][0]["name"] == "English"
+
+
 def test_preview_stream_is_inline_and_uncached(client: TestClient) -> None:
     response = client.get("/preview/stream", params={"url": URL})
 
