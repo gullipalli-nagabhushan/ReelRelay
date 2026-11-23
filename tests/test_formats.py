@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from core import config
-from core.download import _ffmpeg_input, build_plan, plan_preview
+from core.download import _ffmpeg_input, _metadata_args, build_plan, plan_preview
 from core.ytdlp import (
     UnavailableError,
     build_audio_options,
@@ -188,6 +188,102 @@ def test_plan_audio_flac_and_wav(sample_info: dict, ffmpeg_enabled: None) -> Non
     assert flac.embed_cover is True
     assert wav.media_type == "audio/wav"
     assert wav.embed_cover is False
+
+
+def test_plan_audio_carries_source_identifiers(
+    sample_info: dict, ffmpeg_enabled: None
+) -> None:
+    sample_info.update(
+        {
+            "track_number": 3,
+            "track_total": 12,
+            "disc_number": 1,
+            "disc_total": 2,
+            "release_date": "19871116",
+            "copyright": "© 1987 Sony Music",
+            "publisher": "RCA Records",
+            "isrc": "GBARL9300135",
+        }
+    )
+
+    tags = build_plan(sample_info, kind="audio", profile="flac").tags
+
+    assert tags["track"] == "3/12"
+    assert tags["disc"] == "1/2"
+    assert tags["date"] == "1987-11-16"
+    assert tags["copyright"] == "© 1987 Sony Music"
+    assert tags["publisher"] == "RCA Records"
+    assert tags["isrc"] == "GBARL9300135"
+
+
+def test_plan_audio_embeds_lyrics_from_the_description(
+    sample_info: dict, ffmpeg_enabled: None
+) -> None:
+    sample_info["description"] = (
+        "Lyrics:\n"
+        "[Verse 1]\n"
+        "We're no strangers to love\n"
+        "You know the rules and so do I\n"
+        "A full commitment's what I'm thinking of\n"
+    )
+
+    plan = build_plan(sample_info, kind="audio", profile="mp3_320")
+
+    assert plan.tags["lyrics"].startswith("[Verse 1]")
+    assert "Lyrics are embedded." in plan.notes
+
+
+def test_unchanged_year_keeps_the_full_release_date(
+    sample_info: dict, ffmpeg_enabled: None
+) -> None:
+    sample_info["release_date"] = "19871116"
+
+    same_year = build_plan(sample_info, kind="audio", profile="flac", tags={"year": "1987"})
+    new_year = build_plan(sample_info, kind="audio", profile="flac", tags={"year": "1999"})
+
+    assert same_year.tags["date"] == "1987-11-16"
+    assert new_year.tags["date"] == "1999"
+
+
+def test_wav_skips_lyrics(sample_info: dict, ffmpeg_enabled: None) -> None:
+    sample_info["description"] = (
+        "Lyrics:\n"
+        "[Verse 1]\n"
+        "We're no strangers to love\n"
+        "You know the rules and so do I\n"
+        "A full commitment's what I'm thinking of\n"
+    )
+
+    plan = build_plan(sample_info, kind="audio", profile="wav")
+
+    assert "lyrics" not in plan.tags
+
+
+def test_metadata_args_keep_lyrics_and_bound_other_fields() -> None:
+    lyrics = "line one\nline two\nline three"
+    args = _metadata_args(
+        {
+            "title": "T" * 300,
+            "lyrics": lyrics,
+            "copyright": "© 2026",
+            "publisher": "Label",
+            "isrc": "USABC1234567",
+            "disc": "1/2",
+        }
+    )
+
+    assert "lyrics=" + lyrics in args
+    assert "title=" + "T" * 240 in args
+    assert "copyright=© 2026" in args
+    assert "publisher=Label" in args
+    assert "isrc=USABC1234567" in args
+    assert "disc=1/2" in args
+
+
+def test_metadata_args_can_omit_lyrics() -> None:
+    args = _metadata_args({"title": "Song", "lyrics": "a\nb"}, with_lyrics=False)
+
+    assert not any(value.startswith("lyrics=") for value in args)
 
 
 def test_plan_audio_requires_ffmpeg(sample_info: dict, monkeypatch: pytest.MonkeyPatch) -> None:

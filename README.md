@@ -36,7 +36,7 @@ the platform's CDN or piped from ffmpeg's stdout directly into the HTTP
 response. The only lasting file is the ordinary browser download chosen by the
 user.
 
-**Version:** 3.1.0 · **Status:** actively maintained · **License:** MIT
+**Version:** 3.2.0 · **Status:** actively maintained · **License:** MIT
 
 <p align="center">
   <img src="docs/screenshot.png" alt="ReelRelay landing page showing the search box, 8K badge and example videos" width="100%">
@@ -284,6 +284,7 @@ are optional; `python-dotenv` loads `.env` automatically at startup.
 | `PARALLEL_MAX_CONNECTIONS` | `32` | Process-wide cap across every active stream (1-128). |
 | `INFO_CACHE_TTL` | `600` | Seconds a yt-dlp metadata result is reused. |
 | `INFO_CACHE_SIZE` | `64` | Maximum cached videos. |
+| `REELRELAY_LYRICS_LOOKUP` | `true` | Look up plain lyrics on LRCLIB when the description has none. |
 | `YTDLP_COOKIES_FILE` | — | Path to a Netscape `cookies.txt` for your own account. |
 | `YTDLP_PROXY` | — | Proxy used by yt-dlp, e.g. `http://user:pass@host:8080`. |
 | `FFMPEG_BINARY` | auto | Explicit ffmpeg path. |
@@ -377,7 +378,7 @@ Example response:
 | `embed_tags` | `true` \| `false` | Audio tags, default `true`. |
 | `embed_cover` | `true` \| `false` | Cover art, default `true`. |
 | `token` | up to 64 chars | Enables progress tracking. |
-| `title`, `artist`, `album`, `composer`, `genre`, `year`, `track` | text | Override derived metadata. |
+| `title`, `artist`, `album`, `composer`, `genre`, `year`, `track`, `disc`, `copyright`, `publisher`, `isrc` | text | Override derived metadata. |
 
 ### Progress snapshots
 
@@ -423,6 +424,32 @@ ffmpeg reads the source URL(s) with reconnect flags and writes to `pipe:1`.
 Because the output is non-seekable, MP3 tags are prepended by `core/id3.py`
 instead of ffmpeg. FLAC cover art uses a short-lived JPEG temp file that is
 deleted immediately after the request.
+
+### Audio tags and lyrics
+
+Audio downloads carry title, artist, album artist, album, composer, genre,
+date, track/total, disc/total, copyright, publisher, ISRC, the source page as
+comment and a `ReelRelay` encoder signature. MP3 uses ID3v2.3 (`TIT2`, `TPE1`,
+`TPE2`, `TCOM`, `TALB`, `TYER`/`TDAT`, `TCON`, `TRCK`, `TPOS`, `TCOP`, `TSRC`,
+`TPUB`, `COMM`, `APIC`, `USLT`). FLAC writes Vorbis comments, M4A writes MP4
+`ilst` atoms (`©lyr`, `cprt`, `covr`, `trkn`, `disk`), and WAV keeps the basic
+RIFF INFO fields it supports.
+
+Lyrics are embedded in MP3, FLAC and M4A from two sources, in this order:
+
+1. A clear `Lyrics:` block (or a block that starts with `[Verse]` / `[Chorus]`)
+   in the video description is used first. Parsing stops at credits, links and
+   promo lines.
+2. If the description has none and the link looks like music, ReelRelay asks
+   [LRCLIB](https://lrclib.net) for plain lyrics and only accepts a record whose
+   title, artist and duration match. Only artist/title/album/duration are sent;
+   no account or API key is needed. Disable it with
+   `REELRELAY_LYRICS_LOOKUP=false`.
+
+WAV has no lyrics field and keeps only its basic RIFF INFO tags. Lyrics keep
+their line breaks and are bounded to 15,000 characters; other tag values are
+trimmed to 240. The "Original stream" audio option stays byte-for-byte untouched
+and gets no tags.
 
 ### Concurrency and caching
 

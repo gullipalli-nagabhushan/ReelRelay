@@ -4,6 +4,14 @@ from __future__ import annotations
 
 import pytest
 
+from core import config
+
+
+@pytest.fixture(autouse=True)
+def _no_online_lyrics(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the unit suite offline; tests opt in by patching this back on."""
+    monkeypatch.setattr(config, "LYRICS_LOOKUP", False)
+
 
 @pytest.fixture()
 def sample_info() -> dict:

@@ -459,6 +459,14 @@ _COMPOSER_LINE = re.compile(
 )
 
 
+def _join_meta(value: Any, limit: int = 160) -> str:
+    """Join yt-dlp's list-valued metadata (``artists``, ``composers``...)."""
+    if isinstance(value, (list, tuple)):
+        parts = [clean_text(str(item), 120) for item in value if item]
+        return clean_text(", ".join(part for part in parts if part), limit)
+    return clean_text(str(value or ""), limit)
+
+
 def _strip_title_noise(title: str) -> str:
     """Remove (Official Video), [4K Remaster], etc. without touching real words."""
 
@@ -477,7 +485,7 @@ def _strip_title_noise(title: str) -> str:
 
 def _derive_artist_and_song(info: dict[str, Any]) -> tuple[str, str]:
     uploader = clean_text(info.get("uploader") or info.get("channel") or "", 120)
-    artist = clean_text(info.get("artist") or info.get("creator") or "", 120)
+    artist = _join_meta(info.get("artist") or info.get("artists") or info.get("creator"), 120)
     topic_channel = uploader.lower().endswith("- topic")
     if topic_channel:
         uploader = uploader[: -len("- topic")].strip()
@@ -510,7 +518,7 @@ def _derive_artist_and_song(info: dict[str, Any]) -> tuple[str, str]:
 def _derive_composer(info: dict[str, Any], artist: str) -> tuple[str, str]:
     """Return (composer, source). Most sources rarely expose composer, so fall back
     to a composer/songwriter credit found in the description."""
-    direct = clean_text(info.get("composer") or "", 160)
+    direct = _join_meta(info.get("composer") or info.get("composers"))
     if direct:
         return direct, "youtube"
 
@@ -542,15 +550,18 @@ def normalize_metadata(info: dict[str, Any]) -> dict[str, Any]:
     composer, composer_source = _derive_composer(info, artist)
 
     categories = [str(c) for c in (info.get("categories") or []) if c]
-    genre = clean_text(info.get("genre") or "", 80)
+    genre = _join_meta(info.get("genres") or info.get("genre"), 80)
     if not genre:
         # "Music" or "Film & Animation" are still useful tag values.
         genre = categories[0] if categories else ""
 
     year = ""
     release_year = info.get("release_year")
+    release_date = str(info.get("release_date") or "")
     if release_year:
         year = str(release_year)
+    elif len(release_date) >= 4 and release_date[:4].isdigit():
+        year = release_date[:4]
     elif info.get("upload_date") and str(info["upload_date"])[:4].isdigit():
         year = str(info["upload_date"])[:4]
 
@@ -580,8 +591,10 @@ def normalize_metadata(info: dict[str, Any]) -> dict[str, Any]:
 
     is_music = bool(
         info.get("artist")
+        or info.get("artists")
         or info.get("track")
         or info.get("album")
+        or info.get("album_artists")
         or "music" in [c.lower() for c in categories]
     )
     channel_label = {
@@ -602,12 +615,21 @@ def normalize_metadata(info: dict[str, Any]) -> dict[str, Any]:
         "song_title": song_title,
         "artist": artist,
         "album": clean_text(info.get("album") or "", 160),
-        "album_artist": clean_text(info.get("album_artist") or artist, 160),
+        "album_artist": _join_meta(
+            info.get("album_artist") or info.get("album_artists") or artist, 160
+        ),
         "composer": composer,
         "composer_source": composer_source,
         "genre": genre,
         "year": year,
+        "release_date": _format_release_date(info.get("release_date")),
+        "copyright": _join_meta(info.get("copyright"), 200),
+        "isrc": _join_meta(info.get("isrc"), 20),
+        "publisher": _join_meta(info.get("publisher"), 160),
         "track_number": str(info.get("track_number") or ""),
+        "track_total": str(info.get("track_total") or ""),
+        "disc_number": str(info.get("disc_number") or ""),
+        "disc_total": str(info.get("disc_total") or ""),
         "duration": duration,
         "duration_formatted": human_duration(duration),
         "channel": clean_text(
@@ -633,6 +655,27 @@ def _format_upload_date(raw: str) -> str:
     if len(raw) == 8 and raw.isdigit():
         return f"{raw[0:4]}-{raw[4:6]}-{raw[6:8]}"
     return raw
+
+
+def _format_release_date(raw: Any) -> str:
+    """yt-dlp reports ``release_date`` as YYYYMMDD; tags want YYYY-MM-DD."""
+    text = str(raw or "").strip()
+    if len(text) == 8 and text.isdigit():
+        return f"{text[0:4]}-{text[4:6]}-{text[6:8]}"
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        return text
+    return ""
+
+
+def _tag_index(number: str, total: str) -> str:
+    """ID3/MP4 style ``3/12`` when a total is known, else just ``3``."""
+    number = str(number or "").strip()
+    total = str(total or "").strip()
+    if not number:
+        return ""
+    if total and "/" not in number:
+        return f"{number}/{total}"
+    return number
 
 
 # --------------------------------------------------------------------------- #
@@ -988,8 +1031,8 @@ AUDIO_PROFILES: dict[str, dict[str, Any]] = {
         "tags": True,
         "cover": True,
         "lossless": False,
-        "badges": ["Cover art", "Artist & composer", "Plays everywhere"],
-        "description": "Highest quality MP3 with full ID3 tags and the video cover art.",
+        "badges": ["Cover art", "Artist & composer", "Lyrics when available"],
+        "description": "Highest quality MP3 with full ID3 tags, lyrics when available, and the video cover art.",
     },
     "mp3_192": {
         "label": "MP3",
@@ -999,8 +1042,8 @@ AUDIO_PROFILES: dict[str, dict[str, Any]] = {
         "tags": True,
         "cover": True,
         "lossless": False,
-        "badges": ["Cover art", "Artist & composer", "Smaller file"],
-        "description": "Balanced MP3 for phones and older players.",
+        "badges": ["Cover art", "Artist & composer", "Lyrics when available"],
+        "description": "Balanced MP3 for phones and older players, with the same tags as 320 kbps.",
     },
     "m4a_256": {
         "label": "M4A",
@@ -1010,8 +1053,8 @@ AUDIO_PROFILES: dict[str, dict[str, Any]] = {
         "tags": True,
         "cover": False,
         "lossless": False,
-        "badges": ["AAC audio", "Artist & composer", "Apple friendly"],
-        "description": "AAC in an MP4 container — ideal for iPhone, iPad and macOS.",
+        "badges": ["AAC audio", "Artist & composer", "Lyrics when available"],
+        "description": "AAC in an MP4 container — ideal for iPhone, iPad and macOS, with lyrics when available.",
     },
     "flac": {
         "label": "FLAC",
@@ -1021,8 +1064,8 @@ AUDIO_PROFILES: dict[str, dict[str, Any]] = {
         "tags": True,
         "cover": True,
         "lossless": True,
-        "badges": ["Lossless", "Cover art", "Archival"],
-        "description": "Lossless FLAC with cover art and full tags. Large, but pristine.",
+        "badges": ["Lossless", "Cover art", "Lyrics when available"],
+        "description": "Lossless FLAC with cover art, full tags and lyrics when available. Large, but pristine.",
     },
     "wav": {
         "label": "WAV",
@@ -1034,8 +1077,8 @@ AUDIO_PROFILES: dict[str, dict[str, Any]] = {
         "lossless": True,
         "badges": ["Uncompressed", "Editing ready"],
         "description": (
-            "Uncompressed WAV for editing. Basic title/artist/album/year tags are included; "
-            "WAV has no cover-art or composer slot."
+            "Uncompressed WAV for editing. Basic title/artist/album/date/genre/track "
+            "tags are included; WAV has no cover-art, composer or lyrics slot."
         ),
     },
 }
@@ -1180,7 +1223,11 @@ def build_view(info: dict[str, Any]) -> dict[str, Any]:
                 "composer": metadata["composer"],
                 "year": metadata["year"],
                 "genre": metadata["genre"],
-                "track": metadata["track_number"],
+                "track": _tag_index(metadata["track_number"], metadata["track_total"]),
+                "disc": _tag_index(metadata["disc_number"], metadata["disc_total"]),
+                "copyright": metadata["copyright"],
+                "publisher": metadata["publisher"],
+                "isrc": metadata["isrc"],
             },
         }
     )

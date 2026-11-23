@@ -3,13 +3,15 @@
 ffmpeg cannot write an ID3 tag to a *non-seekable* pipe (which is exactly what
 we use so nothing is written to disk).  We therefore ask ffmpeg for the
 raw MP3 frames and prepend a standards-compliant ID3v2.3 tag ourselves.  That
-tag carries the title, artist, album, composer, year, genre and — most
-importantly — the cover art as an APIC frame.
+tag carries the title, artist, album, composer, year, genre, track, comment,
+copyright, ISRC, lyrics and — most importantly — cover art as an APIC frame.
 """
 
 from __future__ import annotations
 
 import struct
+
+from .utils import clean_lyrics
 
 _UTF16 = 0x01
 
@@ -32,12 +34,34 @@ def _frame(frame_id: str, payload: bytes) -> bytes:
     return frame_id.encode("ascii") + struct.pack(">I", len(payload)) + b"\x00\x00" + payload
 
 
+def _utf16(value: str) -> bytes:
+    return b"\xff\xfe" + str(value).encode("utf-16-le")
+
+
 def _text_frame(frame_id: str, value: str) -> bytes:
     text = str(value).strip()
     if not text:
         return b""
-    encoded = text.encode("utf-16-le")
-    return _frame(frame_id, bytes((_UTF16,)) + b"\xff\xfe" + encoded)
+    return _frame(frame_id, bytes((_UTF16,)) + _utf16(text))
+
+
+def _described_frame(frame_id: str, value: str, language: str) -> bytes:
+    """COMM/USLT layout: encoding, language, description, text.
+
+    The description is empty. In UTF-16 every string starts with a byte-order
+    mark, so the empty description is BOM plus its null terminator.
+    """
+    text = str(value).strip()
+    if not text:
+        return b""
+    payload = (
+        bytes((_UTF16,))
+        + language.encode("ascii", "ignore")[:3].ljust(3, b" ")
+        + _utf16("")
+        + b"\x00\x00"
+        + _utf16(text)
+    )
+    return _frame(frame_id, payload)
 
 
 def _apic_frame(image: bytes, mime: str = "image/jpeg") -> bytes:
@@ -56,6 +80,9 @@ def _apic_frame(image: bytes, mime: str = "image/jpeg") -> bytes:
 
 def build_tag(tags: dict[str, str], cover: bytes | None = None, *, encoder: str = "ReelRelay") -> bytes:
     """Build an ID3v2.3 tag (without padding) from a tag mapping."""
+    date = str(tags.get("date") or "")
+    year = str(tags.get("year") or (date[:4] if len(date) >= 4 else ""))[:4]
+
     frames = b"".join(
         (
             _text_frame("TIT2", tags.get("title", "")),
@@ -63,15 +90,30 @@ def build_tag(tags: dict[str, str], cover: bytes | None = None, *, encoder: str 
             _text_frame("TPE2", tags.get("album_artist", "") or tags.get("artist", "")),
             _text_frame("TCOM", tags.get("composer", "")),
             _text_frame("TALB", tags.get("album", "")),
-            _text_frame("TYER", tags.get("year", "")[:4]),
+            _text_frame("TYER", year),
             _text_frame("TCON", tags.get("genre", "")),
             _text_frame("TRCK", tags.get("track", "")),
             _text_frame("TPOS", tags.get("disc", "")),
+            _text_frame("TCOP", tags.get("copyright", "")),
+            _text_frame("TSRC", tags.get("isrc", "")),
+            _text_frame("TPUB", tags.get("publisher", "")),
         )
     )
 
+    # ID3v2.3 has no single ISO date frame; TDAT carries DDMM next to TYER.
+    if len(date) >= 10 and date[4] == "-" and date[7] == "-":
+        day, month = date[8:10], date[5:7]
+        if day.isdigit() and month.isdigit():
+            frames += _text_frame("TDAT", day + month)
+    elif len(date) == 8 and date.isdigit():
+        frames += _text_frame("TDAT", date[6:8] + date[4:6])
+
+    frames += _described_frame("COMM", tags.get("comment", ""), "eng")
+
     if cover:
         frames += _apic_frame(cover)
+
+    frames += _described_frame("USLT", clean_lyrics(tags.get("lyrics", "")), "eng")
 
     if not frames:
         return b""

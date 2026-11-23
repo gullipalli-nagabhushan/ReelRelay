@@ -15,10 +15,10 @@ import tempfile
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from . import config, cover, id3
+from . import config, cover, id3, lyrics
 from .accelerator import open_accelerator
 from .streaming import DownloadError, FFmpegStream, PreparedStream, RelayStream
-from .utils import clean_text, human_size, sanitize_filename
+from .utils import clean_lyrics, clean_text, human_size, sanitize_filename
 from .ytdlp import (
     AUDIO_PROFILES,
     UnavailableError,
@@ -48,7 +48,19 @@ _PLATFORM_ORIGINS = {
     "facebook": "https://www.facebook.com/",
 }
 
-_TAG_KEYS = ("title", "artist", "album", "composer", "genre", "year", "track")
+_TAG_KEYS = (
+    "title",
+    "artist",
+    "album",
+    "composer",
+    "genre",
+    "year",
+    "track",
+    "disc",
+    "copyright",
+    "publisher",
+    "isrc",
+)
 
 
 @dataclass
@@ -216,22 +228,30 @@ def _ffmpeg_base() -> list[str]:
     ]
 
 
-def _metadata_args(tags: dict[str, str]) -> list[str]:
+def _metadata_args(tags: dict[str, str], *, with_lyrics: bool = True) -> list[str]:
     pairs = [
         ("title", tags.get("title", "")),
         ("artist", tags.get("artist", "")),
         ("album_artist", tags.get("album_artist", "") or tags.get("artist", "")),
         ("album", tags.get("album", "")),
         ("composer", tags.get("composer", "")),
-        ("date", tags.get("year", "")),
+        ("date", tags.get("date", "") or tags.get("year", "")),
         ("genre", tags.get("genre", "")),
         ("track", tags.get("track", "")),
+        ("disc", tags.get("disc", "")),
         ("comment", tags.get("comment", "")),
+        ("copyright", tags.get("copyright", "")),
+        ("isrc", tags.get("isrc", "")),
+        ("publisher", tags.get("publisher", "")),
         ("encoder", "ReelRelay"),
     ]
+    if with_lyrics:
+        pairs.append(("lyrics", tags.get("lyrics", "")))
+
     args: list[str] = ["-map_metadata", "-1"]
     for key, value in pairs:
-        value = clean_text(value, 240)
+        # Lyrics keep their line breaks; everything else is single-line text.
+        value = clean_lyrics(value) if key == "lyrics" else clean_text(value, 240)
         if value:
             args.extend(["-metadata", f"{key}={value}"])
     return args
@@ -240,6 +260,19 @@ def _metadata_args(tags: dict[str, str]) -> list[str]:
 def _normalise_tags(info: dict[str, Any], overrides: dict[str, str] | None) -> dict[str, str]:
     # Raw yt-dlp data has no derived artist/song split, so normalise it here.
     meta = normalize_metadata(info) if "song_title" not in info else info
+
+    track = str(meta.get("track_number") or "")
+    track_total = str(meta.get("track_total") or "")
+    if track and track_total and "/" not in track:
+        track = f"{track}/{track_total}"
+
+    disc = str(meta.get("disc_number") or "")
+    disc_total = str(meta.get("disc_total") or "")
+    if disc and disc_total and "/" not in disc:
+        disc = f"{disc}/{disc_total}"
+
+    source_year = str(meta.get("year") or "")
+
     defaults = {
         "title": meta.get("song_title") or meta.get("title") or "",
         "artist": meta.get("artist") or meta.get("channel") or "",
@@ -248,8 +281,13 @@ def _normalise_tags(info: dict[str, Any], overrides: dict[str, str] | None) -> d
         "composer": meta.get("composer") or "",
         "genre": meta.get("genre") or "",
         "year": meta.get("year") or "",
-        "track": meta.get("track_number") or "",
+        "date": meta.get("release_date") or meta.get("year") or "",
+        "track": track,
+        "disc": disc,
         "comment": f"Source: {meta.get('webpage_url') or meta.get('url') or ''}",
+        "copyright": meta.get("copyright") or "",
+        "isrc": meta.get("isrc") or "",
+        "publisher": meta.get("publisher") or "",
     }
     for key in _TAG_KEYS:
         value = (overrides or {}).get(key)
@@ -257,6 +295,10 @@ def _normalise_tags(info: dict[str, Any], overrides: dict[str, str] | None) -> d
             defaults[key] = clean_text(str(value), 200)
     if "album_artist" in defaults and not defaults["album_artist"]:
         defaults["album_artist"] = defaults["artist"]
+    # Keep the full release date unless the user actually changed the year.
+    year_override = clean_text(str((overrides or {}).get("year") or ""), 200)
+    if year_override and year_override != source_year:
+        defaults["date"] = year_override
     return defaults
 
 
@@ -491,6 +533,18 @@ def plan_audio(
     cover_supported = bool(definition["cover"])
     notes: list[str] = []
 
+    # WAV has no lyrics field, so asking for them there would only cost a
+    # request. MP3, FLAC and M4A get USLT / LYRICS / ©lyr respectively.
+    if embed_tags and tags_supported and definition["ext"] != "wav":
+        try:
+            found_lyrics = lyrics.lookup(info, tags, duration)
+        except Exception:  # noqa: BLE001 - lyrics are optional
+            logger.exception("Lyrics lookup failed; continuing without lyrics")
+            found_lyrics = ""
+        if found_lyrics:
+            tags["lyrics"] = found_lyrics
+            notes.append("Lyrics are embedded.")
+
     if from_video:
         notes.append("This link has no standalone audio stream, so the audio track is extracted from the video.")
     if profile == "mp3_320" or profile == "mp3_192":
@@ -498,7 +552,7 @@ def plan_audio(
     if profile == "m4a_256":
         notes.append("Tags are embedded; cover art is not supported in streamed M4A — use MP3 or FLAC for artwork.")
     if profile == "wav":
-        notes.append("WAV supports basic title/artist/album/year/genre tags only — no cover art or composer.")
+        notes.append("WAV supports basic title/artist/album/date/genre/track/copyright tags only — no cover art, lyrics or composer.")
     if definition["lossless"]:
         notes.append("Lossless output — expect a large file.")
 
@@ -632,7 +686,7 @@ def _audio_command(
 
     if profile == "wav":
         command += ["-c:a", "pcm_s16le"]
-        command += _metadata_args(plan.tags)
+        command += _metadata_args(plan.tags, with_lyrics=False)
         command += ["-f", "wav", "pipe:1"]
         return command
 

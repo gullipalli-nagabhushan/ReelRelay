@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from core.utils import (
+    clean_lyrics,
     clean_text,
     compact_number,
     content_disposition,
@@ -89,6 +90,19 @@ def test_clean_text_strips_controls() -> None:
     assert clean_text("  hello\n\tworld  ") == "hello world"
     assert clean_text(None) == ""
     assert clean_text("abcdef", max_length=3) == "abc"
+
+
+def test_clean_lyrics_keeps_line_breaks() -> None:
+    text = clean_lyrics("  first line\r\n\r\n\r\nsecond line\x00  ")
+
+    assert text == "first line\n\nsecond line"
+
+
+def test_clean_lyrics_cuts_at_a_line_boundary() -> None:
+    text = clean_lyrics("one two three\nfour five six", max_length=14)
+
+    assert text == "one two three"
+    assert len(text) <= 14
 
 
 def test_content_disposition_is_rfc6266() -> None:

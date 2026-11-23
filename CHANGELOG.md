@@ -9,6 +9,14 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- Lyrics and complete audio identifiers in the web app. Audio downloads now
+  embed the video description's lyrics block, or a title/artist/duration-matched
+  plain-text result from LRCLIB for music links, in MP3 (`USLT`), FLAC
+  (`LYRICS`) and M4A (`©lyr`). MP3 files also gain the missing `COMM` source
+  comment. Copyright, publisher, ISRC, disc number and track/disc totals are
+  extracted from the source and written to every format that supports them,
+  exposed in the preview tag editor, and accepted as `/api/prepare` and
+  `/download` overrides. WAV keeps its existing basic RIFF tags and skips lyrics.
 - Desktop-parity format catalogue in the Android app. The picker now shows up to
   three codec families per height (H.264, H.265, AV1, VP9) with fps, HDR and
   Portrait badges, estimated file sizes, a starred 1080p H.264 suggestion and

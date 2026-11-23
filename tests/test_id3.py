@@ -60,3 +60,54 @@ def test_skips_blank_fields() -> None:
     assert b"TIT2" in tag
     assert b"TPE1" not in tag
     assert b"TCOM" not in tag
+
+
+def test_writes_extra_identifiers() -> None:
+    tag = build_tag(
+        {
+            "title": "Song",
+            "copyright": "© 2026 ReelRelay Records",
+            "publisher": "ReelRelay Records",
+            "isrc": "USABC1234567",
+            "track": "3/12",
+            "disc": "1/2",
+        },
+        None,
+    )
+
+    for frame in (b"TCOP", b"TPUB", b"TSRC", b"TRCK", b"TPOS"):
+        assert frame in tag
+    assert "USABC1234567".encode("utf-16-le") in tag
+    assert "3/12".encode("utf-16-le") in tag
+
+
+def test_writes_a_comment_frame() -> None:
+    tag = build_tag({"comment": "Source: https://youtu.be/dQw4w9WgXcQ"}, None)
+
+    assert b"COMM" in tag
+    assert "Source: https://youtu.be/dQw4w9WgXcQ".encode("utf-16-le") in tag
+
+
+def test_writes_uslt_lyrics_with_line_breaks() -> None:
+    text = "We're no strangers to love\nYou know the rules and so do I"
+    tag = build_tag({"lyrics": text}, None)
+
+    assert b"USLT" in tag
+    index = tag.index(b"USLT")
+    size = int.from_bytes(tag[index + 4 : index + 8], "big")
+    payload = tag[index + 10 : index + 10 + size]
+
+    assert payload[0] == 0x01
+    assert payload[1:4] == b"eng"
+    assert payload[4:6] == b"\xff\xfe"  # empty descriptor: BOM
+    assert payload[6:8] == b"\x00\x00"
+    assert text.encode("utf-16-le") in payload
+
+
+def test_writes_full_date_as_tdat() -> None:
+    tag = build_tag({"title": "Song", "date": "1987-11-16"}, None)
+
+    assert b"TYER" in tag
+    assert b"TDAT" in tag
+    assert "1987".encode("utf-16-le") in tag
+    assert "1611".encode("utf-16-le") in tag

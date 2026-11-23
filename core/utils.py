@@ -75,6 +75,28 @@ def clean_text(value: str | None, max_length: int = 300) -> str:
     return text[:max_length].strip()
 
 
+def clean_lyrics(value: str | None, max_length: int = 15_000) -> str:
+    """Sanitise lyrics while preserving their line breaks.
+
+    ``clean_text`` collapses every whitespace run, which would turn a song into
+    a single line, so lyrics need their own helper. Control characters are
+    removed, CRLF becomes LF, trailing spaces are dropped and runs of blank
+    lines are capped. The result is cut at a line boundary.
+    """
+    if not value:
+        return ""
+    text = str(value).replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
+    text = text.replace("\t", " ")
+    lines = [line.rstrip() for line in text.split("\n")]
+    text = "\n".join(lines)
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    if len(text) > max_length:
+        cut = text.rfind("\n", 0, max_length)
+        text = text[: cut if cut > max_length // 2 else max_length].rstrip()
+    return text
+
+
 def content_disposition(filename: str, *, inline: bool = False) -> str:
     """RFC 6266 header with an ASCII fallback and UTF-8 support.
 

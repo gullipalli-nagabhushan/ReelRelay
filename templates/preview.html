@@ -271,11 +271,34 @@
                             <input type="text" class="form-control" id="tagTrack" maxlength="8"
                                    inputmode="numeric" value="{{ media.tags.track }}" placeholder="1">
                         </div>
+                        <div class="tag-field">
+                            <label for="tagDisc">Disc no.</label>
+                            <input type="text" class="form-control" id="tagDisc" maxlength="8"
+                                   inputmode="numeric" value="{{ media.tags.disc }}" placeholder="1">
+                        </div>
+                        <div class="tag-field">
+                            <label for="tagCopyright">Copyright</label>
+                            <input type="text" class="form-control" id="tagCopyright" maxlength="200"
+                                   value="{{ media.tags.copyright }}" placeholder="© 2026 Label">
+                        </div>
+                        <div class="tag-field">
+                            <label for="tagPublisher">Publisher</label>
+                            <input type="text" class="form-control" id="tagPublisher" maxlength="160"
+                                   value="{{ media.tags.publisher }}" placeholder="Record label">
+                        </div>
+                        <div class="tag-field">
+                            <label for="tagIsrc">ISRC</label>
+                            <input type="text" class="form-control" id="tagIsrc" maxlength="20"
+                                   value="{{ media.tags.isrc }}" placeholder="USABC1234567">
+                        </div>
                     </div>
 
                     <p class="tag-hint">
                         <i class="bi bi-info-circle"></i>
-                        Tags are written for MP3, FLAC, M4A and WAV. Cover art comes from the video thumbnail.
+                        Tags are written for MP3, FLAC, M4A and WAV; WAV keeps only the basic
+                        fields. Cover art comes from the video thumbnail. Lyrics are added to MP3,
+                        FLAC and M4A when the video description contains them, or from LRCLIB for
+                        music links.
                     </p>
                 </div>
 
@@ -408,8 +431,14 @@
         const player = document.getElementById('inlinePreview');
         const previewFallback = document.getElementById('previewFallback');
 
-        const fieldIds = ['tagTitle', 'tagArtist', 'tagAlbum', 'tagComposer', 'tagGenre', 'tagYear', 'tagTrack'];
-        const paramNames = ['title', 'artist', 'album', 'composer', 'genre', 'year', 'track'];
+        const fieldIds = [
+            'tagTitle', 'tagArtist', 'tagAlbum', 'tagComposer', 'tagGenre', 'tagYear',
+            'tagTrack', 'tagDisc', 'tagCopyright', 'tagPublisher', 'tagIsrc'
+        ];
+        const paramNames = [
+            'title', 'artist', 'album', 'composer', 'genre', 'year',
+            'track', 'disc', 'copyright', 'publisher', 'isrc'
+        ];
 
         let busy = false;
         let lastButton = null;

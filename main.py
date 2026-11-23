@@ -228,6 +228,10 @@ def _collect_tags(
     genre: str | None,
     year: str | None,
     track: str | None,
+    disc: str | None = None,
+    copyright: str | None = None,
+    publisher: str | None = None,
+    isrc: str | None = None,
 ) -> dict[str, str]:
     return {
         key: value
@@ -239,6 +243,10 @@ def _collect_tags(
             "genre": genre,
             "year": year,
             "track": track,
+            "disc": disc,
+            "copyright": copyright,
+            "publisher": publisher,
+            "isrc": isrc,
         }.items()
         if value
     }
@@ -400,12 +408,18 @@ async def api_prepare(
     genre: str | None = None,
     year: str | None = None,
     track: str | None = None,
+    disc: str | None = None,
+    copyright: str | None = None,
+    publisher: str | None = None,
+    isrc: str | None = None,
 ):
     if not is_valid_url(url):
         return JSONResponse({"ok": False, "error": "Not a supported video URL."}, status_code=400)
 
     token = (token or "").strip()[:64]
-    tags = _collect_tags(title, artist, album, composer, genre, year, track)
+    tags = _collect_tags(
+        title, artist, album, composer, genre, year, track, disc, copyright, publisher, isrc
+    )
     try:
         info = await run_in_threadpool(get_info, url)
         plan = await run_in_threadpool(
@@ -486,6 +500,10 @@ async def download(
     genre: str | None = None,
     year: str | None = None,
     track: str | None = None,
+    disc: str | None = None,
+    copyright: str | None = None,
+    publisher: str | None = None,
+    isrc: str | None = None,
 ):
     if not is_valid_url(url):
         return _error_response(request, "Not a supported video URL.")
@@ -506,7 +524,9 @@ async def download(
 
     plan: DownloadPlan | None = None
     try:
-        tags = _collect_tags(title, artist, album, composer, genre, year, track)
+        tags = _collect_tags(
+            title, artist, album, composer, genre, year, track, disc, copyright, publisher, isrc
+        )
         info = await run_in_threadpool(get_info, url)
         plan = await run_in_threadpool(
             build_plan,
