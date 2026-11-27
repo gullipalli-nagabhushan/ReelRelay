@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from core.id3 import _syncsafe, build_tag
+from core.id3 import _syncsafe, build_tag, parse_lrc
 
 TAGS = {
     "title": "Café del Mar",
@@ -111,3 +111,69 @@ def test_writes_full_date_as_tdat() -> None:
     assert b"TDAT" in tag
     assert "1987".encode("utf-16-le") in tag
     assert "1611".encode("utf-16-le") in tag
+
+
+def test_parse_lrc_reads_timestamps_and_repeated_lines() -> None:
+    entries = parse_lrc(
+        "[ar:Rick Astley]\n"
+        "[00:01.50]First line\n"
+        "[00:10.00][00:30.00]Repeated line\n"
+    )
+
+    assert entries == [
+        (1500, "First line"),
+        (10000, "Repeated line"),
+        (30000, "Repeated line"),
+    ]
+
+
+def test_synced_lyrics_write_uslt_sylt_and_txxx() -> None:
+    plain = "First line\nRepeated line"
+    synced = "[00:01.50]First line\n[00:10.00]Repeated line"
+
+    tag = build_tag({"lyrics": plain}, None, synced_lyrics=synced)
+
+    assert b"USLT" in tag
+    assert b"SYLT" in tag
+    assert b"TXXX" in tag
+    # USLT stays plain for players without timestamp support.
+    uslt = tag.index(b"USLT")
+    uslt_size = int.from_bytes(tag[uslt + 4 : uslt + 8], "big")
+    uslt_payload = tag[uslt + 10 : uslt + 10 + uslt_size]
+    assert "[00:01.50]".encode("utf-16-le") not in uslt_payload
+    assert "First line".encode("utf-16-le") in uslt_payload
+    # Timed lines live in SYLT and TXXX:LYRICS.
+    assert "[00:01.50]First line".encode("utf-16-le") in tag
+    assert "LYRICS".encode("utf-16-le") in tag
+
+    sylt = tag.index(b"SYLT")
+    size = int.from_bytes(tag[sylt + 4 : sylt + 8], "big")
+    payload = tag[sylt + 10 : sylt + 10 + size]
+    assert payload[0] == 0x01
+    assert payload[1:4] == b"eng"
+    assert payload[4] == 0x02  # milliseconds
+    assert payload[5] == 0x01  # lyrics
+
+
+def test_synced_lyrics_can_be_turned_off() -> None:
+    synced = "[00:01.50]First line\n[00:10.00]Repeated line"
+
+    tag = build_tag(
+        {"lyrics": "First line\nRepeated line"},
+        None,
+        synced_lyrics=synced,
+        prefer_synced=False,
+    )
+
+    assert b"USLT" in tag
+    assert b"SYLT" not in tag
+    assert b"TXXX" not in tag
+    assert b"[00:01.50]" not in tag
+    assert "First line".encode("utf-16-le") in tag
+
+
+def test_one_timed_line_is_not_enough_for_sylt() -> None:
+    tag = build_tag({"lyrics": "Only line"}, None, synced_lyrics="[00:01.00]Only line")
+
+    assert b"SYLT" not in tag
+    assert b"USLT" in tag

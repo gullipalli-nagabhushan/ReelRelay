@@ -4,13 +4,22 @@ from __future__ import annotations
 
 import pytest
 
-from core import config
+from core import ai_lyrics, config, lyrics
 
 
 @pytest.fixture(autouse=True)
 def _no_online_lyrics(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep the unit suite offline; tests opt in by patching this back on."""
     monkeypatch.setattr(config, "LYRICS_LOOKUP", False)
+    # AI tests patch their own key and HTTP layer. By default no key exists, so
+    # a forgotten opt-in cannot reach Groq.
+    monkeypatch.setattr(config, "GROQ_API_KEY", "")
+    monkeypatch.setattr(config, "AI_LYRICS_ENABLED", True)
+    ai_lyrics.clear_cache()
+    lyrics.clear_cache()
+    yield
+    ai_lyrics.clear_cache()
+    lyrics.clear_cache()
 
 
 @pytest.fixture()

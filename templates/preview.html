@@ -231,6 +231,27 @@
                         </div>
                     </div>
 
+                    {% set ai = media.ai_lyrics or {} %}
+                    <div class="ai-panel">
+                        <div class="ai-toggles">
+                            <label class="switch-row{% if not ai.lyrics_enabled %} is-disabled{% endif %}">
+                                <input type="checkbox" id="aiLyrics"{% if not ai.lyrics_enabled %} disabled{% endif %}>
+                                <span class="switch-ui" aria-hidden="true"></span>
+                                <span>AI lyrics <span class="ai-badge">Groq</span></span>
+                            </label>
+                            <label class="switch-row{% if not ai.tags_enabled %} is-disabled{% endif %}">
+                                <input type="checkbox" id="aiTags"{% if not ai.tags_enabled %} disabled{% endif %}>
+                                <span class="switch-ui" aria-hidden="true"></span>
+                                <span>Fill missing tags with AI</span>
+                            </label>
+                        </div>
+                        <p class="ai-note" id="aiNote">
+                            <i class="bi bi-stars"></i>
+                            {{ ai.note or 'Optional AI assistance is unavailable for this link.' }}
+                        </p>
+                        <p class="ai-status" id="aiStatus" role="status" hidden></p>
+                    </div>
+
                     <div class="tag-grid">
                         <div class="tag-field tag-field-wide">
                             <label for="tagTitle">Title</label>
@@ -296,9 +317,10 @@
                     <p class="tag-hint">
                         <i class="bi bi-info-circle"></i>
                         Tags are written for MP3, FLAC, M4A and WAV; WAV keeps only the basic
-                        fields. Cover art comes from the video thumbnail. Lyrics are added to MP3,
-                        FLAC and M4A when the video description contains them, or from LRCLIB for
-                        music links.
+                        fields. Cover art comes from the video thumbnail. Lyrics come from the
+                        description or LRCLIB and include synchronized LRC lines when timings are
+                        available. Tick <strong>AI lyrics</strong> to transcribe the audio with Groq
+                        when the free sources find nothing.
                     </p>
                 </div>
 
@@ -327,10 +349,13 @@
                             {% for badge in option.badges %}
                             <span class="chip">{{ badge }}</span>
                             {% endfor %}
-                            {% if media.lyrics.available and option.profile in ('mp3_320', 'mp3_192', 'm4a_256', 'flac') %}
-                            <span class="chip">Lyrics</span>
+                            {% set can_embed = option.profile in ('mp3_320', 'mp3_192', 'm4a_256', 'flac') %}
+                            {% if media.lyrics.available %}
+                            <span class="chip chip-lyrics" data-lyrics-chip="1" data-can-embed="{{ '1' if can_embed else '0' }}">{{ ('Synced lyrics' if media.lyrics.synchronized else 'Lyrics') if can_embed else 'Lyrics not embedded' }}</span>
+                            {% elif can_embed and ai.lyrics_enabled %}
+                            <span class="chip chip-muted chip-lyrics" data-lyrics-chip="1" data-can-embed="1">AI lyrics</span>
                             {% else %}
-                            <span class="chip chip-muted">No lyrics</span>
+                            <span class="chip chip-muted chip-lyrics" data-lyrics-chip="1" data-can-embed="{{ '1' if can_embed else '0' }}">No lyrics</span>
                             {% endif %}
                             {% if not option.cover %}<span class="chip chip-muted">No cover</span>{% endif %}
                         </div>
@@ -423,6 +448,13 @@
                         <span id="confirmLyricsText"></span>
                     </div>
                 </li>
+                <li id="confirmTagsRow" class="confirm-fact" hidden>
+                    <i class="bi bi-stars" aria-hidden="true"></i>
+                    <div>
+                        <strong>AI tags</strong>
+                        <span id="confirmTagsText"></span>
+                    </div>
+                </li>
                 <li id="confirmCaptionsRow" class="confirm-fact" hidden>
                     <i class="bi bi-badge-cc" aria-hidden="true"></i>
                     <div>
@@ -471,10 +503,16 @@
         const confirmLyricsText = document.getElementById('confirmLyricsText');
         const confirmCaptionsRow = document.getElementById('confirmCaptionsRow');
         const confirmCaptionsText = document.getElementById('confirmCaptionsText');
+        const confirmTagsRow = document.getElementById('confirmTagsRow');
+        const confirmTagsText = document.getElementById('confirmTagsText');
         const confirmStart = document.getElementById('confirmStart');
         const confirmCancel = document.getElementById('confirmCancel');
+        const aiLyricsToggle = document.getElementById('aiLyrics');
+        const aiTagsToggle = document.getElementById('aiTags');
+        const aiStatus = document.getElementById('aiStatus');
         const player = document.getElementById('inlinePreview');
         const previewFallback = document.getElementById('previewFallback');
+        const lyricsCache = new Map();
 
         const fieldIds = [
             'tagTitle', 'tagArtist', 'tagAlbum', 'tagComposer', 'tagGenre', 'tagYear',
@@ -535,6 +573,138 @@
                 if (value) tags[paramNames[index]] = value;
             });
             return tags;
+        }
+
+        const initialLyricsChips = Array.from(document.querySelectorAll('[data-lyrics-chip]')).map((chip) => ({
+            chip,
+            text: chip.textContent,
+            muted: chip.classList.contains('chip-muted'),
+        }));
+
+        function resetLyricsChips() {
+            initialLyricsChips.forEach((entry) => {
+                entry.chip.textContent = entry.text;
+                entry.chip.classList.toggle('chip-muted', entry.muted);
+            });
+        }
+
+        function setAiStatus(message, kind) {
+            if (!aiStatus) return;
+            aiStatus.hidden = !message;
+            aiStatus.textContent = message || '';
+            aiStatus.classList.toggle('is-error', kind === 'error');
+            aiStatus.classList.toggle('is-ok', kind === 'ok');
+        }
+
+        function applyLyricsResult(result) {
+            const available = Boolean(result && result.available);
+            const synced = Boolean(result && result.synchronized);
+            document.querySelectorAll('[data-lyrics-chip]').forEach((chip) => {
+                if (chip.dataset.canEmbed !== '1') return;
+                chip.textContent = available ? (synced ? 'Synced lyrics' : 'Lyrics') : 'No lyrics';
+                chip.classList.toggle('chip-muted', !available);
+            });
+            if (result && result.label) {
+                const warnings = Array.isArray(result.warnings) ? result.warnings : [];
+                setAiStatus(
+                    result.label + (warnings.length ? ' ' + warnings.join(' ') : ''),
+                    available ? 'ok' : ''
+                );
+            }
+        }
+
+        async function requestAiLyrics() {
+            if (!aiLyricsToggle || !aiLyricsToggle.checked) {
+                resetLyricsChips();
+                setAiStatus('');
+                return;
+            }
+            const tags = collectTags();
+            const cacheKey = [
+                videoUrl,
+                tags.artist || '',
+                tags.title || '',
+                tags.album || '',
+            ].join('|');
+            const cached = lyricsCache.get(cacheKey);
+            if (cached) {
+                applyLyricsResult(cached);
+                return;
+            }
+
+            setAiStatus('Looking for lyrics and, if needed, transcribing the audio with Groq…');
+            aiLyricsToggle.disabled = true;
+            try {
+                const params = new URLSearchParams({ url: videoUrl, ai: '1' });
+                Object.entries(tags).forEach(([key, value]) => params.set(key, value));
+                const response = await fetch('/api/lyrics?' + params.toString(), {
+                    headers: { 'Accept': 'application/json' },
+                    cache: 'no-store',
+                });
+                const data = await response.json();
+                if (!response.ok || !data.ok) {
+                    throw new Error((data && data.error) || 'Could not look up lyrics.');
+                }
+                lyricsCache.set(cacheKey, data.lyrics);
+                applyLyricsResult(data.lyrics);
+            } catch (error) {
+                setAiStatus(
+                    error && error.message ? error.message : 'Could not look up lyrics.',
+                    'error'
+                );
+                aiLyricsToggle.checked = false;
+                resetLyricsChips();
+            } finally {
+                aiLyricsToggle.disabled = false;
+            }
+        }
+
+        async function requestAiTags() {
+            if (!aiTagsToggle || !aiTagsToggle.checked) {
+                setAiStatus('');
+                return;
+            }
+            setAiStatus('Reading the description for missing tags…');
+            aiTagsToggle.disabled = true;
+            try {
+                const params = new URLSearchParams({ url: videoUrl });
+                Object.entries(collectTags()).forEach(([key, value]) => params.set(key, value));
+                const response = await fetch('/api/tags?' + params.toString(), {
+                    headers: { 'Accept': 'application/json' },
+                    cache: 'no-store',
+                });
+                const data = await response.json();
+                if (!response.ok || !data.ok) {
+                    throw new Error((data && data.error) || 'Could not read the description.');
+                }
+                const suggestions = data.tags || {};
+                let filled = 0;
+                Object.entries(suggestions).forEach(([key, value]) => {
+                    const index = paramNames.indexOf(key);
+                    if (index === -1) return;
+                    const field = document.getElementById(fieldIds[index]);
+                    if (field && !field.value.trim()) {
+                        field.value = value;
+                        filled += 1;
+                    }
+                });
+                updatePreviews();
+                const warnings = (data.warnings || []).join(' ');
+                setAiStatus(
+                    filled
+                        ? `AI filled ${filled} missing tag${filled === 1 ? '' : 's'}. ${warnings}`
+                        : `No missing tags were found in the description. ${warnings}`,
+                    filled ? 'ok' : ''
+                );
+            } catch (error) {
+                setAiStatus(
+                    error && error.message ? error.message : 'Could not read the description.',
+                    'error'
+                );
+                aiTagsToggle.checked = false;
+            } finally {
+                aiTagsToggle.disabled = false;
+            }
         }
 
         function updatePreviews() {
@@ -687,6 +857,21 @@
             } else if (confirmCaptionsRow) {
                 confirmCaptionsRow.hidden = true;
             }
+
+            const aiTags = plan.ai_tags || {};
+            const aiEntries = Object.entries(aiTags);
+            if (aiEntries.length && confirmTagsRow) {
+                const summary = aiEntries
+                    .map(([key, value]) => {
+                        const label = key.replace(/_/g, ' ');
+                        const suffix = value && value.inferred ? ' (inferred)' : '';
+                        return label + ': ' + (value && value.value ? value.value : '') + suffix;
+                    })
+                    .join(' · ');
+                setConfirmFact(confirmTagsRow, confirmTagsText, summary, true);
+            } else if (confirmTagsRow) {
+                confirmTagsRow.hidden = true;
+            }
             return true;
         }
 
@@ -727,8 +912,12 @@
                 Object.entries(tags).forEach(([key, value]) => params.set(key, value));
                 const embedTags = document.getElementById('embedTags');
                 const embedCover = document.getElementById('embedCover');
+                const aiLyrics = document.getElementById('aiLyrics');
+                const aiTags = document.getElementById('aiTags');
                 params.set('embed_tags', embedTags && !embedTags.checked ? '0' : '1');
                 params.set('embed_cover', embedCover && !embedCover.checked ? '0' : '1');
+                params.set('ai_lyrics', aiLyrics && aiLyrics.checked ? '1' : '0');
+                params.set('ai_tags', aiTags && aiTags.checked ? '1' : '0');
             }
             return params;
         }
@@ -926,6 +1115,8 @@
 
         if (confirmStart) confirmStart.addEventListener('click', beginDownload);
         if (confirmCancel) confirmCancel.addEventListener('click', hideOverlay);
+        if (aiLyricsToggle) aiLyricsToggle.addEventListener('change', requestAiLyrics);
+        if (aiTagsToggle) aiTagsToggle.addEventListener('change', requestAiTags);
 
         if (player) {
             player.addEventListener('error', () => {

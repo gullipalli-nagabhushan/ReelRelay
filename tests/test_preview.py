@@ -77,15 +77,17 @@ def test_preview_audio_cards_show_a_lyrics_chip(
 
     body = client.post("/preview", data={"media_url": URL}).text
 
-    assert '<span class="chip">Lyrics</span>' in body
+    assert 'data-lyrics-chip="1"' in body
+    assert ">Lyrics</span>" in body
     assert "Lyrics when available" not in body
 
 
 def test_preview_audio_cards_show_no_lyrics(client: TestClient) -> None:
     body = client.post("/preview", data={"media_url": URL}).text
 
-    assert '<span class="chip chip-muted">No lyrics</span>' in body
-    assert '<span class="chip">Lyrics</span>' not in body
+    assert ">No lyrics</span>" in body
+    assert ">Lyrics</span>" not in body
+    assert "chip-lyrics" in body
 
 
 def test_preview_has_a_download_confirmation_step(client: TestClient) -> None:
@@ -166,3 +168,59 @@ def test_api_prepare_forwards_extra_tags(client: TestClient) -> None:
     assert query["publisher"] == ["RCA Records"]
     assert query["isrc"] == ["GBARL9300135"]
     assert query["disc"] == ["1/2"]
+
+
+def test_preview_audio_tab_has_ai_controls(client: TestClient) -> None:
+    body = client.post("/preview", data={"media_url": URL}).text
+
+    for marker in ('id="aiLyrics"', 'id="aiTags"', 'id="aiNote"', 'id="aiStatus"'):
+        assert marker in body
+    # No GROQ_API_KEY in the test environment, so both opt-ins stay disabled.
+    assert 'id="aiLyrics" disabled' in body
+    assert 'id="aiTags" disabled' in body
+
+
+def test_api_lyrics_returns_free_description_lyrics(
+    client: TestClient, sample_info: dict
+) -> None:
+    sample_info["description"] = (
+        "Lyrics:\n"
+        "[Verse 1]\n"
+        "We're no strangers to love\n"
+        "You know the rules and so do I\n"
+        "A full commitment's what I'm thinking of\n"
+    )
+
+    payload = client.get(
+        "/api/lyrics", params={"url": URL, "ai": "1"}
+    ).json()
+
+    assert payload["ok"] is True
+    assert payload["lyrics"]["status"] == "description"
+    assert payload["lyrics"]["available"] is True
+    assert "We're no strangers to love" in payload["lyrics"]["text"]
+
+
+def test_api_prepare_forwards_ai_flags(client: TestClient, sample_info: dict) -> None:
+    sample_info["description"] = (
+        "Lyrics:\n"
+        "[Verse 1]\n"
+        "We're no strangers to love\n"
+        "You know the rules and so do I\n"
+        "A full commitment's what I'm thinking of\n"
+    )
+
+    payload = client.get(
+        "/api/prepare",
+        params={
+            "url": URL,
+            "kind": "audio",
+            "profile": "mp3_320",
+            "ai_lyrics": "1",
+            "ai_tags": "1",
+        },
+    ).json()
+
+    query = parse_qs(urlparse(payload["download_url"]).query)
+    assert query["ai_lyrics"] == ["1"]
+    assert query["ai_tags"] == ["1"]

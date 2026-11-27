@@ -303,6 +303,19 @@ a:hover {
     border-style: dashed;
 }
 
+.chip-lyrics {
+    color: #d9ffe9;
+    background: rgba(52, 211, 153, 0.12);
+    border-color: rgba(52, 211, 153, 0.32);
+}
+
+.chip-lyrics.chip-muted {
+    color: var(--muted);
+    background: var(--surface);
+    border-color: var(--border);
+    border-style: dashed;
+}
+
 /* ---------- Hero --------------------------------------------------------- */
 
 .hero {
@@ -1417,6 +1430,68 @@ a:hover {
 .switch-row input:focus-visible + .switch-ui {
     outline: 2px solid var(--cyan);
     outline-offset: 2px;
+}
+
+.switch-row.is-disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.ai-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    margin: 0 0 1rem;
+    padding: 0.75rem 0.9rem;
+    background: linear-gradient(135deg, rgba(167, 139, 250, 0.09), rgba(76, 215, 246, 0.05));
+    border: 1px solid rgba(167, 139, 250, 0.22);
+    border-radius: var(--radius-sm);
+}
+
+.ai-toggles {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem 1.2rem;
+    align-items: center;
+}
+
+.ai-badge {
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--violet);
+    border: 1px solid rgba(167, 139, 250, 0.4);
+    border-radius: 999px;
+    padding: 0.05rem 0.38rem;
+    margin-left: 0.25rem;
+}
+
+.ai-note {
+    margin: 0;
+    font-size: 0.74rem;
+    line-height: 1.5;
+    color: var(--muted);
+}
+
+.ai-note i {
+    color: var(--violet);
+}
+
+.ai-status {
+    margin: 0;
+    font-size: 0.76rem;
+    font-weight: 600;
+    color: var(--text-soft);
+    line-height: 1.5;
+}
+
+.ai-status.is-ok {
+    color: var(--emerald);
+}
+
+.ai-status.is-error {
+    color: var(--rose-soft);
 }
 
 .tag-grid {

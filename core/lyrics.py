@@ -1,6 +1,6 @@
 """Lyrics lookup for audio downloads.
 
-Two sources are tried, in this order:
+Two free sources are tried, in this order:
 
 1. A lyrics block in the video description. Many music uploads put the full
    text there, so it travels with the source and costs no extra request.
@@ -8,9 +8,10 @@ Two sources are tried, in this order:
    music. The best record is chosen by title, artist and duration instead of
    trusting the first search hit.
 
-Only *plain* (unsynced) lyrics are returned. ID3 ``USLT``, Vorbis ``LYRICS``
-and MP4 ``©lyr`` are all unsynchronised fields; storing LRC timestamps in them
-would show ``[00:17.12]`` in players that do not parse LRC.
+Both plain and timed (LRC) text are kept when the source provides timestamps.
+``Result.plain`` is what most players show; ``Result.synced`` is the LRC text
+used for the synchronised tags (MP3 ``SYLT``/``TXXX``, FLAC ``LYRICS`` and the
+MP4 lyrics atom). A source without timestamps still produces plain lyrics.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from __future__ import annotations
 import logging
 import re
 import unicodedata
+from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from functools import lru_cache
 from typing import Any
@@ -44,6 +46,14 @@ SOURCE_NOT_EMBEDDED = "not-embedded"
 SOURCE_UNSUPPORTED = "unsupported"
 SOURCE_VIDEO = "video"
 SOURCE_ERROR = "error"
+# AI lyrics (Groq). The source is kept separate so the UI can explain that a
+# transcript is a best-effort result rather than an official lyrics file.
+SOURCE_AI_AUDIO = "ai-audio"
+SOURCE_AI_DESCRIPTION = "ai-description"
+SOURCE_AI_TOO_LONG = "ai-too-long"
+SOURCE_AI_UNAVAILABLE = "ai-unavailable"
+SOURCE_AI_NO_VOCALS = "ai-no-vocals"
+SOURCE_AI_ERROR = "ai-error"
 
 _LABELS = {
     SOURCE_DESCRIPTION: "Lyrics found in the video description.",
@@ -56,7 +66,52 @@ _LABELS = {
     SOURCE_UNSUPPORTED: "This format cannot store lyrics.",
     SOURCE_VIDEO: "Video downloads do not embed lyrics.",
     SOURCE_ERROR: "Lyrics lookup failed; the download will continue without lyrics.",
+    SOURCE_AI_AUDIO: "Lyrics transcribed from the audio with Groq Whisper.",
+    SOURCE_AI_DESCRIPTION: "Lyrics extracted from the description with Groq.",
+    SOURCE_AI_TOO_LONG: "AI lyrics are only available for audio under 10 minutes.",
+    SOURCE_AI_UNAVAILABLE: "AI lyrics need a Groq API key and ffmpeg.",
+    SOURCE_AI_NO_VOCALS: "No recognizable lyrics were found in the audio.",
+    SOURCE_AI_ERROR: "AI lyrics extraction failed; the download will continue without lyrics.",
 }
+
+# Sources whose text can be written into a file's lyrics field.
+_EMBEDDABLE = {
+    SOURCE_DESCRIPTION,
+    SOURCE_LRCLIB,
+    SOURCE_AI_AUDIO,
+    SOURCE_AI_DESCRIPTION,
+}
+
+
+@dataclass(frozen=True)
+class Result:
+    """One lyrics lookup outcome.
+
+    ``plain`` is a human-readable block with no timestamps. ``synced`` is LRC
+    text (``[mm:ss.xx]line``) and is empty when the source had no timing data.
+    Raw and formatted AI transcripts are kept separate so the two can be
+    inspected independently.
+    """
+
+    source: str
+    plain: str = ""
+    synced: str = ""
+    language: str = ""
+    warnings: tuple[str, ...] = ()
+    raw: str = ""
+    formatted: str = ""
+    label: str = ""
+    tags: dict[str, Any] = field(default_factory=dict)
+    description: dict[str, Any] = field(default_factory=dict)
+    retryable: bool = False
+
+    @property
+    def available(self) -> bool:
+        return bool(self.plain)
+
+    @property
+    def synchronized(self) -> bool:
+        return bool(self.synced)
 
 # A heading is a line that is only "Lyrics", "Official Lyrics", "Lyrics:".
 _HEADING = re.compile(
@@ -112,6 +167,21 @@ def _plain_from_synced(synced: str) -> str:
         if not _LRC_META.match(line)
     ]
     return "\n".join(lines).strip()
+
+
+def _has_timestamps(text: str) -> bool:
+    return any(_STAMP.match(line) for line in str(text or "").splitlines())
+
+
+def _clean_lrc(synced: str) -> str:
+    """Keep timecoded lines and drop LRC metadata such as ``[ar:]``."""
+    lines = []
+    for line in str(synced or "").replace("\r\n", "\n").split("\n"):
+        if _LRC_META.match(line):
+            continue
+        if _STAMP.match(line):
+            lines.append(line.rstrip())
+    return clean_lyrics("\n".join(lines), MAX_LYRICS)
 
 
 def _should_stop(line: str) -> bool:
@@ -249,9 +319,11 @@ def _duration_score(query: int, candidate: Any) -> float:
     return 0.0
 
 
-def _pick(records: list[dict[str, Any]], artist: str, title: str, duration: int) -> str:
+def _pick_result(
+    records: list[dict[str, Any]], artist: str, title: str, duration: int
+) -> Result | None:
     """Choose the best LRCLIB record, rejecting instrumentals and wrong songs."""
-    best: str = ""
+    best: Result | None = None
     best_score = -1.0
     wanted_noise = bool(_NOISE.search(title))
 
@@ -275,12 +347,15 @@ def _pick(records: list[dict[str, Any]], artist: str, title: str, duration: int)
         if artist_score < 0.45:
             continue
 
-        plain = record.get("plainLyrics") or _plain_from_synced(
-            str(record.get("syncedLyrics") or "")
-        )
-        plain = clean_lyrics(str(plain), MAX_LYRICS)
+        synced = _clean_lrc(str(record.get("syncedLyrics") or ""))
+        plain = str(record.get("plainLyrics") or "")
+        if not plain:
+            plain = _plain_from_synced(synced) if synced else ""
+        plain = clean_lyrics(plain, MAX_LYRICS)
         if len(plain) < 20:
             continue
+        if not _has_timestamps(synced):
+            synced = ""
 
         score = (
             title_score * 3
@@ -289,9 +364,15 @@ def _pick(records: list[dict[str, Any]], artist: str, title: str, duration: int)
         )
         if score > best_score:
             best_score = score
-            best = plain
+            best = Result(source=SOURCE_LRCLIB, plain=plain, synced=synced)
 
     return best
+
+
+def _pick(records: list[dict[str, Any]], artist: str, title: str, duration: int) -> str:
+    """Backward-compatible plain-text wrapper around :func:`_pick_result`."""
+    result = _pick_result(records, artist, title, duration)
+    return result.plain if result else ""
 
 
 def _search(params: dict[str, str]) -> list[dict[str, Any]] | None:
@@ -332,17 +413,25 @@ def _search(params: dict[str, str]) -> list[dict[str, Any]] | None:
 
 
 @lru_cache(maxsize=256)
-def from_lrclib(artist: str, title: str, album: str, duration: int) -> str:
-    """Look up lyrics on LRCLIB and return the best plain-text match."""
+def from_lrclib_result(
+    artist: str, title: str, album: str, duration: int
+) -> Result | None:
+    """Look up LRCLIB and return the best record with plain and LRC text."""
     structured = {"track_name": title, "artist_name": artist}
     if album:
         structured["album_name"] = album
     records = _search(structured)
     if records is None:
-        return ""
+        return None
     if not records:
         records = _search({"q": f"{artist} {title}"}) or []
-    return _pick(records, artist, title, duration)
+    return _pick_result(records, artist, title, duration)
+
+
+def from_lrclib(artist: str, title: str, album: str, duration: int) -> str:
+    """Backward-compatible plain-text wrapper around :func:`from_lrclib_result`."""
+    result = from_lrclib_result(artist, title, album, duration)
+    return result.plain if result else ""
 
 
 def _is_music(info: dict[str, Any], tags: dict[str, str]) -> bool:
@@ -359,15 +448,15 @@ def _is_music(info: dict[str, Any], tags: dict[str, str]) -> bool:
 
 def lookup(info: dict[str, Any], tags: dict[str, str], duration: int) -> str:
     """Lyrics for a download: description first, then LRCLIB when enabled."""
-    return probe(info, tags, duration)[0]
+    return probe_result(info, tags, duration).plain
 
 
-def probe(
+def probe_result(
     info: dict[str, Any], tags: dict[str, str], duration: int
-) -> tuple[str, str]:
-    """Return ``(lyrics, source)`` so a caller can explain what happened.
+) -> Result:
+    """Return a :class:`Result` with plain and, when available, LRC lyrics.
 
-    ``source`` is one of the ``SOURCE_*`` constants. An empty string is paired
+    The ``source`` field explains what happened. An empty ``plain`` is paired
     with a reason such as ``disabled``, ``not-music``, ``unknown`` or ``none``,
     which lets the download confirmation tell the user whether lyrics exist
     instead of silently embedding nothing.
@@ -375,27 +464,41 @@ def probe(
     text = from_description(info)
     if text:
         logger.info("Lyrics taken from the description (%d characters)", len(text))
-        return text, SOURCE_DESCRIPTION
+        return Result(source=SOURCE_DESCRIPTION, plain=text)
 
     if not config.LYRICS_LOOKUP:
-        return "", SOURCE_DISABLED
+        return Result(source=SOURCE_DISABLED)
     if not _is_music(info, tags):
-        return "", SOURCE_NOT_MUSIC
+        return Result(source=SOURCE_NOT_MUSIC)
 
     artist = tags.get("artist", "").strip()
     title = tags.get("title", "").strip()
     if not artist or not title:
-        return "", SOURCE_UNKNOWN
+        return Result(source=SOURCE_UNKNOWN)
     if artist.casefold() in {"unknown artist", "unknown creator"}:
-        return "", SOURCE_UNKNOWN
+        return Result(source=SOURCE_UNKNOWN)
     if title.casefold() in {"unknown title", "untitled"}:
-        return "", SOURCE_UNKNOWN
+        return Result(source=SOURCE_UNKNOWN)
 
-    text = from_lrclib(artist, title, tags.get("album", ""), max(0, int(duration)))
-    if text:
-        logger.info("Lyrics matched on LRCLIB (%d characters)", len(text))
-        return text, SOURCE_LRCLIB
-    return "", SOURCE_NONE
+    result = from_lrclib_result(
+        artist, title, tags.get("album", ""), max(0, int(duration))
+    )
+    if result is not None and result.available:
+        logger.info(
+            "Lyrics matched on LRCLIB (%d characters%s)",
+            len(result.plain),
+            ", synchronized" if result.synced else "",
+        )
+        return result
+    return Result(source=SOURCE_NONE)
+
+
+def probe(
+    info: dict[str, Any], tags: dict[str, str], duration: int
+) -> tuple[str, str]:
+    """Backward-compatible ``(plain, source)`` wrapper around :func:`probe_result`."""
+    result = probe_result(info, tags, duration)
+    return result.plain, result.source
 
 
 def describe(
@@ -404,6 +507,7 @@ def describe(
     text: str = "",
     embedded: bool | None = None,
     detail: str = "",
+    synchronized: bool = False,
 ) -> dict[str, Any]:
     """Turn a lookup result into a small, UI-friendly status object.
 
@@ -411,12 +515,13 @@ def describe(
     never go into the confirmation response. ``embedded`` is ``None`` when the
     caller only wants to show availability (the format cards), ``True`` when the
     lyrics will be written into the file, and ``False`` when the chosen format
-    cannot store them.
+    cannot store them. ``synchronized`` says whether timed LRC lines exist.
     """
     available = bool(text)
     label = detail or _LABELS.get(source, "Lyrics status is unknown.")
-    if available and source in (SOURCE_DESCRIPTION, SOURCE_LRCLIB):
-        label = _LABELS[source]
+    if available and source in _EMBEDDABLE:
+        if not detail:
+            label = _LABELS[source]
         if embedded is True:
             label += " They will be embedded in this file."
         elif embedded is False:
@@ -425,6 +530,7 @@ def describe(
         "status": source,
         "available": available,
         "embedded": bool(available and embedded is True),
+        "synchronized": bool(available and synchronized),
         "characters": len(text),
         "label": label,
     }
@@ -432,4 +538,4 @@ def describe(
 
 def clear_cache() -> None:
     """Forget cached lookups (used by tests and after a config change)."""
-    from_lrclib.cache_clear()
+    from_lrclib_result.cache_clear()

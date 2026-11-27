@@ -21,7 +21,7 @@ if load_dotenv is not None:
 logger = logging.getLogger(__name__)
 
 APP_NAME = "ReelRelay"
-APP_VERSION = "3.3.0"
+APP_VERSION = "3.4.0"
 APP_TAGLINE = "YouTube · Instagram · Facebook, straight to your device"
 
 
@@ -93,6 +93,33 @@ FFMPEG_OK = bool(FFMPEG)
 # LRCLIB when the description has none. Only the artist, title, album and
 # duration are sent; no account or API key is involved.
 LYRICS_LOOKUP = _env_bool("REELRELAY_LYRICS_LOOKUP", True)
+# Prefer timed LRC text where a format has a timed lyrics field. MP3 keeps a
+# plain USLT plus timed SYLT/TXXX:LYRICS; FLAC and M4A store the LRC text in
+# their main lyrics field. Set this to false to store plain text only.
+LYRICS_SYNCED = _env_bool("REELRELAY_LYRICS_SYNCED", True)
+
+# Optional AI lyrics through Groq. This is opt-in per download: the audio tab
+# has a checkbox, and nothing is sent to Groq unless the user ticks it.
+# The key is read on the server only and is never exposed to the browser.
+GROQ_API_KEY = (
+    os.getenv("GROQ_API_KEY") or os.getenv("REELRELAY_GROQ_API_KEY") or ""
+).strip()
+GROQ_BASE_URL = (
+    os.getenv("GROQ_BASE_URL") or "https://api.groq.com/openai/v1"
+).rstrip("/")
+GROQ_WHISPER_MODEL = os.getenv("GROQ_WHISPER_MODEL") or "whisper-large-v3"
+GROQ_TEXT_MODEL = os.getenv("GROQ_TEXT_MODEL") or "openai/gpt-oss-20b"
+AI_LYRICS_ENABLED = _env_bool("REELRELAY_AI_LYRICS", True)
+# Groq's speech endpoint accepts up to 25 MB and 10 minutes. ReelRelay refuses
+# longer audio instead of silently truncating a song.
+GROQ_MAX_AUDIO_SECONDS = max(30, min(_env_int("GROQ_MAX_AUDIO_SECONDS", 600), 600))
+GROQ_MAX_AUDIO_BYTES = 25 * 1024 * 1024
+GROQ_TIMEOUT = max(30, min(_env_int("GROQ_TIMEOUT", 180), 600))
+GROQ_AUDIO_TIMEOUT = max(30, min(_env_int("GROQ_AUDIO_TIMEOUT", 240), 900))
+# Include negative results ("no lyrics") so a song is not transcribed again
+# and again during the same server session.
+AI_LYRICS_CACHE_TTL = max(300, _env_int("AI_LYRICS_CACHE_TTL", 21600))
+AI_LYRICS_CACHE_SIZE = max(16, _env_int("AI_LYRICS_CACHE_SIZE", 256))
 
 # Fallback user agent, only used when a format does not expose its own headers.
 DEFAULT_USER_AGENT = (
@@ -119,4 +146,10 @@ def summary() -> dict:
         "cookies_configured": bool(COOKIES_FILE),
         "proxy_configured": bool(PROXY),
         "lyrics_lookup": LYRICS_LOOKUP,
+        "ai_lyrics_configured": bool(AI_LYRICS_ENABLED and GROQ_API_KEY),
+        "ai_lyrics_models": {
+            "transcription": GROQ_WHISPER_MODEL,
+            "text": GROQ_TEXT_MODEL,
+        },
+        "ai_lyrics_max_seconds": GROQ_MAX_AUDIO_SECONDS,
     }

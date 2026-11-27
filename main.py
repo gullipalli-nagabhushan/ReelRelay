@@ -27,7 +27,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 
-from core import config
+from core import ai_lyrics, config
 from core.download import DownloadPlan, build_plan, plan_preview, prepare_stream
 from core.examples import get_examples
 from core.progress import progress
@@ -401,6 +401,8 @@ async def api_prepare(
     format_id: str | None = Query(None, max_length=24),
     embed_tags: bool = Query(True),
     embed_cover: bool = Query(True),
+    ai_lyrics: bool = Query(False),
+    ai_tags: bool = Query(False),
     title: str | None = None,
     artist: str | None = None,
     album: str | None = None,
@@ -434,6 +436,8 @@ async def api_prepare(
             tags=tags,
             embed_tags=embed_tags,
             embed_cover=embed_cover,
+            use_ai_lyrics=ai_lyrics,
+            use_ai_tags=ai_tags,
         )
     except (ExtractionError, UnavailableError) as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=422)
@@ -460,6 +464,8 @@ async def api_prepare(
         "format_id": format_id,
         "embed_tags": "1" if embed_tags else "0",
         "embed_cover": "1" if embed_cover else "0",
+        "ai_lyrics": "1" if ai_lyrics else "0",
+        "ai_tags": "1" if ai_tags else "0",
         **tags,
     }
     query = urlencode({key: value for key, value in params.items() if value not in (None, "")})
@@ -473,6 +479,112 @@ async def api_prepare(
         "token": token or None,
     }
     return JSONResponse(payload)
+
+
+@app.get("/api/lyrics")
+async def api_lyrics(
+    request: Request,
+    url: str = Query(..., min_length=3),
+    ai: bool = Query(True),
+    duration: int | None = Query(None, ge=0, le=86_400),
+    title: str | None = None,
+    artist: str | None = None,
+    album: str | None = None,
+    composer: str | None = None,
+    genre: str | None = None,
+    year: str | None = None,
+    track: str | None = None,
+    disc: str | None = None,
+    copyright: str | None = None,
+    publisher: str | None = None,
+    isrc: str | None = None,
+):
+    """Resolve lyrics once for the AI checkbox and cache the outcome.
+
+    Free sources are tried first. Groq is only called when ``ai=true`` and the
+    description/LRCLIB have no lyrics. The response includes the text so the
+    preview can show it, but the API key never leaves the server.
+    """
+    if not is_valid_url(url):
+        return JSONResponse(
+            {"ok": False, "error": "Not a supported video URL."}, status_code=400
+        )
+
+    tags = _collect_tags(
+        title, artist, album, composer, genre, year, track, disc, copyright, publisher, isrc
+    )
+    try:
+        info = await run_in_threadpool(get_info, url)
+        effective = int(duration if duration is not None else info.get("duration") or 0)
+        result, cached = await run_in_threadpool(
+            ai_lyrics.resolve, info, tags, effective, use_ai=ai
+        )
+    except (ExtractionError, UnavailableError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=422)
+    except Exception:  # noqa: BLE001
+        logger.exception("Lyrics lookup failed for %s", url)
+        return JSONResponse(
+            {"ok": False, "error": "Could not look up lyrics for this link."},
+            status_code=500,
+        )
+
+    return JSONResponse(
+        {"ok": True, "lyrics": ai_lyrics.payload(result, cached=cached)}
+    )
+
+
+@app.get("/api/tags")
+async def api_tags(
+    request: Request,
+    url: str = Query(..., min_length=3),
+    title: str | None = None,
+    artist: str | None = None,
+    album: str | None = None,
+    composer: str | None = None,
+    genre: str | None = None,
+    year: str | None = None,
+    track: str | None = None,
+    disc: str | None = None,
+    copyright: str | None = None,
+    publisher: str | None = None,
+    isrc: str | None = None,
+):
+    """Suggest missing tags from facts stated in the description.
+
+    The caller sends the values already in the tag editor; only empty fields
+    are filled. Nothing is embedded here; ``/api/prepare`` and ``/download``
+    apply the same suggestions when ``ai_tags=1``.
+    """
+    if not is_valid_url(url):
+        return JSONResponse(
+            {"ok": False, "error": "Not a supported video URL."}, status_code=400
+        )
+
+    tags = _collect_tags(
+        title, artist, album, composer, genre, year, track, disc, copyright, publisher, isrc
+    )
+    try:
+        info = await run_in_threadpool(get_info, url)
+        suggestions, details, warnings = await run_in_threadpool(
+            ai_lyrics.enrich_tags, info, tags
+        )
+    except (ExtractionError, UnavailableError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=422)
+    except Exception:  # noqa: BLE001
+        logger.exception("AI tag lookup failed for %s", url)
+        return JSONResponse(
+            {"ok": False, "error": "Could not read tags from this description."},
+            status_code=500,
+        )
+
+    return JSONResponse(
+        {
+            "ok": True,
+            "tags": suggestions,
+            "details": details,
+            "warnings": warnings,
+        }
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -493,6 +605,8 @@ async def download(
     format_id: str | None = Query(None, max_length=24),
     embed_tags: bool = Query(True),
     embed_cover: bool = Query(True),
+    ai_lyrics: bool = Query(False),
+    ai_tags: bool = Query(False),
     title: str | None = None,
     artist: str | None = None,
     album: str | None = None,
@@ -542,6 +656,8 @@ async def download(
             tags=tags,
             embed_tags=embed_tags,
             embed_cover=embed_cover,
+            use_ai_lyrics=ai_lyrics,
+            use_ai_tags=ai_tags,
         )
         if token:
             progress.create(

@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlunparse
 
 import yt_dlp
 
-from . import config, lyrics
+from . import ai_lyrics, config, lyrics
 from .utils import clean_text, compact_number, human_duration, human_size
 
 logger = logging.getLogger(__name__)
@@ -1350,18 +1350,29 @@ def build_view(info: dict[str, Any]) -> dict[str, Any]:
     # downloads. LRCLIB results are cached, so the later /api/prepare call is
     # free; non-music links never hit the network.
     try:
-        lyrics_text, lyrics_source = lyrics.probe(info, tags, int(metadata["duration"] or 0))
+        lyrics_result = lyrics.probe_result(
+            info, tags, int(metadata["duration"] or 0)
+        )
     except Exception:  # noqa: BLE001 - lyrics are optional
         logger.exception("Lyrics probe failed for %s", metadata.get("url"))
-        lyrics_text, lyrics_source = "", lyrics.SOURCE_ERROR
-    lyrics_status = lyrics.describe(lyrics_source, text=lyrics_text)
+        lyrics_result = lyrics.Result(source=lyrics.SOURCE_ERROR)
+    lyrics_status = lyrics.describe(
+        lyrics_result.source,
+        text=lyrics_result.plain,
+        synchronized=lyrics_result.synchronized,
+    )
+    try:
+        ai_status = ai_lyrics.availability(info)
+    except Exception:  # noqa: BLE001 - availability is informational
+        logger.exception("AI availability check failed for %s", metadata.get("url"))
+        ai_status = {"enabled": False, "lyrics_enabled": False, "tags_enabled": False}
 
     metadata.update(
         {
             "video_options": video_options,
             "audio_options": audio_options,
             "max_height": max_height,
-            "max_quality": _quality_name(max_height) if max_height else "—",
+            "max_quality": _quality_name(max_height) if max_height else "-",
             "has_4k": max_height >= 2160,
             "has_hdr": has_hdr,
             "has_60fps": has_60fps,
@@ -1375,6 +1386,7 @@ def build_view(info: dict[str, Any]) -> dict[str, Any]:
             "ffmpeg_ok": config.FFMPEG_OK,
             "tags": tags,
             "lyrics": lyrics_status,
+            "ai_lyrics": ai_status,
         }
     )
     return metadata

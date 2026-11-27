@@ -15,7 +15,7 @@ import tempfile
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from . import config, cover, id3, lyrics
+from . import ai_lyrics, config, cover, id3, lyrics
 from .accelerator import open_accelerator
 from .streaming import DownloadError, FFmpegStream, PreparedStream, RelayStream
 from .utils import clean_lyrics, clean_text, human_size, sanitize_filename
@@ -94,6 +94,10 @@ class DownloadPlan:
     embed_tags: bool = False
     embed_cover: bool = False
     cover_urls: list[str] = field(default_factory=list)
+    # Timed LRC text for SYLT/FLAC/MP4 synchronized lyrics, when available.
+    synced_lyrics: str = ""
+    # Tag fields filled from the description by AI, for the confirmation dialog.
+    ai_tags: dict[str, Any] = field(default_factory=dict)
 
     # What the confirmation dialog should tell the user about extras.
     lyrics: dict[str, Any] = field(default_factory=dict)
@@ -111,6 +115,7 @@ class DownloadPlan:
             "notes": self.notes,
             "estimated_total": self.estimated_total,
             "lyrics": self.lyrics,
+            "ai_tags": self.ai_tags,
             "captions": self.captions,
         }
 
@@ -235,7 +240,13 @@ def _ffmpeg_base() -> list[str]:
     ]
 
 
-def _metadata_args(tags: dict[str, str], *, with_lyrics: bool = True) -> list[str]:
+def _metadata_args(
+    tags: dict[str, str],
+    *,
+    with_lyrics: bool = True,
+    lyrics_value: str | None = None,
+    unsynced_value: str | None = None,
+) -> list[str]:
     pairs = [
         ("title", tags.get("title", "")),
         ("artist", tags.get("artist", "")),
@@ -253,12 +264,17 @@ def _metadata_args(tags: dict[str, str], *, with_lyrics: bool = True) -> list[st
         ("encoder", "ReelRelay"),
     ]
     if with_lyrics:
-        pairs.append(("lyrics", tags.get("lyrics", "")))
+        if lyrics_value is None:
+            lyrics_value = tags.get("lyrics", "")
+        pairs.append(("lyrics", lyrics_value))
+        if unsynced_value:
+            pairs.append(("unsyncedlyrics", unsynced_value))
 
     args: list[str] = ["-map_metadata", "-1"]
     for key, value in pairs:
-        # Lyrics keep their line breaks; everything else is single-line text.
-        value = clean_lyrics(value) if key == "lyrics" else clean_text(value, 240)
+        # Lyrics keep their line breaks and LRC timestamps; other values are
+        # single-line text.
+        value = clean_lyrics(value) if key in ("lyrics", "unsyncedlyrics") else clean_text(value, 240)
         if value:
             args.extend(["-metadata", f"{key}={value}"])
     return args
@@ -486,15 +502,17 @@ def plan_audio(
     tags_override: dict[str, str] | None,
     embed_tags: bool,
     embed_cover: bool,
+    use_ai_lyrics: bool = False,
+    use_ai_tags: bool = False,
 ) -> DownloadPlan:
     duration = int(info.get("duration") or 0)
     platform = str(info.get("_platform") or "youtube").lower()
     tags = _normalise_tags(info, tags_override)
     base = _base_name(info, tags)
-    cover_urls = cover.cover_candidates(info)
 
     if profile == "original":
         source = find_audio_format(info, format_id, allow_progressive=False)
+        cover_urls = cover.cover_candidates(info)
         ext = str(source.get("ext") or "m4a")
         size = source.get("filesize") or source.get("filesize_approx")
         if not size and duration:
@@ -524,12 +542,26 @@ def plan_audio(
             ),
         )
 
+    # The original stream is relayed untouched, so asking Groq for tags there
+    # would cost a request that could never be embedded. Every converted
+    # profile (including WAV's basic fields) can use the suggestions.
     definition = AUDIO_PROFILES.get(profile)
     if definition is None:
         raise UnavailableError("Unknown audio format. Refresh the preview and pick a format again.")
     if not config.FFMPEG_OK:
         raise UnavailableError("ffmpeg is required for converted audio (MP3, FLAC, M4A, WAV).")
 
+    ai_tag_info: dict[str, Any] = {}
+    ai_tag_warnings: list[str] = []
+    if use_ai_tags:
+        suggestions, ai_tag_info, ai_tag_warnings = ai_lyrics.enrich_tags(info, tags)
+        for field, value in suggestions.items():
+            if not tags.get(field):
+                tags[field] = value
+        if suggestions:
+            base = _base_name(info, tags)
+
+    cover_urls = cover.cover_candidates(info)
     source = find_audio_format(info, None, allow_progressive=True)
     from_video = source.get("vcodec") not in (None, "none")
     ext = definition["ext"]
@@ -543,13 +575,17 @@ def plan_audio(
     tags_supported = bool(definition["tags"])
     cover_supported = bool(definition["cover"])
     notes: list[str] = []
+    if ai_tag_info:
+        notes.append("Missing tags were filled from the description with AI.")
+    notes.extend(ai_tag_warnings)
 
     # WAV has no lyrics field, so asking for them there would only cost a
-    # request. MP3, FLAC and M4A get USLT / LYRICS / ©lyr respectively.
+    # request. MP3, FLAC and M4A get plain and timed lyrics.
     lyrics_status = lyrics.describe(
         lyrics.SOURCE_NOT_EMBEDDED,
         detail="Tag embedding is off, so no tags or lyrics are added.",
     )
+    synced_lyrics = ""
     if embed_tags and tags_supported:
         if definition["ext"] == "wav":
             lyrics_status = lyrics.describe(
@@ -558,16 +594,28 @@ def plan_audio(
             )
         else:
             try:
-                found_lyrics, lyrics_source = lyrics.probe(info, tags, duration)
+                if use_ai_lyrics:
+                    result, _cached = ai_lyrics.resolve(info, tags, duration)
+                else:
+                    result = lyrics.probe_result(info, tags, duration)
             except Exception:  # noqa: BLE001 - lyrics are optional
                 logger.exception("Lyrics lookup failed; continuing without lyrics")
                 lyrics_status = lyrics.describe(lyrics.SOURCE_ERROR)
             else:
-                if found_lyrics:
-                    tags["lyrics"] = found_lyrics
-                    notes.append("Lyrics are embedded.")
+                if result.available:
+                    tags["lyrics"] = result.plain
+                    synced_lyrics = result.synced
+                    notes.append(
+                        "Synchronized lyrics are embedded."
+                        if synced_lyrics
+                        else "Lyrics are embedded."
+                    )
                 lyrics_status = lyrics.describe(
-                    lyrics_source, text=found_lyrics, embedded=bool(found_lyrics)
+                    result.source,
+                    text=result.plain,
+                    embedded=result.available,
+                    detail=result.label,
+                    synchronized=result.synchronized,
                 )
 
     if from_video:
@@ -600,6 +648,8 @@ def plan_audio(
         embed_tags=bool(embed_tags and tags_supported),
         embed_cover=bool(embed_cover and cover_supported),
         cover_urls=cover_urls,
+        synced_lyrics=synced_lyrics,
+        ai_tags=ai_tag_info,
         lyrics=lyrics_status,
     )
 
@@ -693,7 +743,14 @@ def _audio_command(
 
     if profile == "flac":
         command += ["-c:a", "flac", "-compression_level", "5"]
-        command += _metadata_args(plan.tags)
+        # Poweramp gives the LYRICS field priority and parses LRC timestamps;
+        # UNSYNCEDLYRICS keeps a clean plain fallback for other players.
+        timed = plan.synced_lyrics if config.LYRICS_SYNCED else ""
+        command += _metadata_args(
+            plan.tags,
+            lyrics_value=timed or plan.tags.get("lyrics", ""),
+            unsynced_value=plan.tags.get("lyrics", "") if timed else None,
+        )
         command += ["-f", "flac", "pipe:1"]
         return command
 
@@ -706,7 +763,11 @@ def _audio_command(
             "-movflags",
             "frag_keyframe+empty_moov+default_base_moof",
         ]
-        command += _metadata_args(plan.tags)
+        timed = plan.synced_lyrics if config.LYRICS_SYNCED else ""
+        command += _metadata_args(
+            plan.tags,
+            lyrics_value=timed or plan.tags.get("lyrics", ""),
+        )
         command += ["-f", "mp4", "pipe:1"]
         return command
 
@@ -788,12 +849,22 @@ def prepare_stream(plan: DownloadPlan) -> PreparedStream:
 
         if cover_bytes and plan.profile in ("mp3_320", "mp3_192"):
             if plan.embed_tags:
-                prefix = id3.build_tag(plan.tags, cover_bytes)
+                prefix = id3.build_tag(
+                    plan.tags,
+                    cover_bytes,
+                    synced_lyrics=plan.synced_lyrics,
+                    prefer_synced=config.LYRICS_SYNCED,
+                )
         elif cover_bytes and plan.profile == "flac":
             temp_cover = _TempCover(cover_bytes)
 
         if plan.profile in ("mp3_320", "mp3_192") and plan.embed_tags and not prefix:
-            prefix = id3.build_tag(plan.tags, None)
+            prefix = id3.build_tag(
+                plan.tags,
+                None,
+                synced_lyrics=plan.synced_lyrics,
+                prefer_synced=config.LYRICS_SYNCED,
+            )
 
         cleanups: list[Callable[[], None]] = []
         if temp_cover is not None:
@@ -849,6 +920,8 @@ def build_plan(
     tags: dict[str, str] | None = None,
     embed_tags: bool = True,
     embed_cover: bool = True,
+    use_ai_lyrics: bool = False,
+    use_ai_tags: bool = False,
 ) -> DownloadPlan:
     if kind == "video":
         plan = plan_video(
@@ -869,6 +942,8 @@ def build_plan(
             tags_override=tags,
             embed_tags=embed_tags,
             embed_cover=embed_cover,
+            use_ai_lyrics=use_ai_lyrics,
+            use_ai_tags=use_ai_tags,
         )
     else:
         raise UnavailableError("Unknown download type.")

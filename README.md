@@ -36,7 +36,7 @@ the platform's CDN or piped from ffmpeg's stdout directly into the HTTP
 response. The only lasting file is the ordinary browser download chosen by the
 user.
 
-**Version:** 3.3.0 · **Status:** actively maintained · **License:** MIT
+**Version:** 3.4.0 · **Status:** actively maintained · **License:** MIT
 
 <p align="center">
   <img src="docs/screenshot.png" alt="ReelRelay landing page showing the search box, 8K badge and example videos" width="100%">
@@ -52,6 +52,8 @@ user.
 | Audio formats | Original stream, MP3 320/192, FLAC, M4A (AAC 256), WAV |
 | Metadata | Title, artist, album, composer, genre, year and track, editable before download |
 | Cover art | Best thumbnail embedded as ID3 `APIC` (MP3) or FLAC picture |
+| Lyrics | Description block or title/artist/duration-matched LRCLIB, optionally synchronized LRC lines; MP3, FLAC and M4A |
+| Optional AI | Opt-in Groq Whisper transcription and GPT-OSS description interpretation for lyrics and missing tags; the key stays server-side |
 | Inline preview | Play the video in the page before downloading; a small progressive rendition is relayed to a native `<video>` player |
 | Android app | Standalone Kotlin app in `android/` with bundled yt-dlp + ffmpeg, parallel high-resolution downloads, inline ExoPlayer preview and MediaStore downloads |
 | Zero storage | Relay or ffmpeg pipe; no media cache and no app-managed downloads folder |
@@ -138,6 +140,8 @@ flowchart LR
 | `core/config.py` | Environment configuration, ffmpeg discovery, cookie-file validation |
 | `core/ytdlp.py` | URL validation, extraction, metadata normalization, format catalogs, friendly errors |
 | `core/download.py` | `DownloadPlan`, `build_plan()`, `prepare_stream()`, tagging rules |
+| `core/lyrics.py` | Description and LRCLIB lookup, plain and synchronized LRC results |
+| `core/ai_lyrics.py` | Optional Groq transcription, description interpretation and tag suggestions |
 | `core/streaming.py` | `RelayStream` (range resume) and `FFmpegStream` (pipe) |
 | `core/accelerator.py` | Parallel-range localhost proxy for high-resolution muxing |
 | `core/progress.py` | Thread-safe, bounded progress registry |
@@ -285,6 +289,12 @@ are optional; `python-dotenv` loads `.env` automatically at startup.
 | `INFO_CACHE_TTL` | `600` | Seconds a yt-dlp metadata result is reused. |
 | `INFO_CACHE_SIZE` | `64` | Maximum cached videos. |
 | `REELRELAY_LYRICS_LOOKUP` | `true` | Look up plain lyrics on LRCLIB when the description has none. |
+| `REELRELAY_LYRICS_SYNCED` | `true` | Prefer timed LRC text in lyrics fields when the source provides timings. |
+| `GROQ_API_KEY` | — | Enables the opt-in AI lyrics and tag checkboxes. Server-side only. |
+| `REELRELAY_AI_LYRICS` | `true` | Master switch for the AI options; they also need a Groq key and ffmpeg. |
+| `GROQ_WHISPER_MODEL` | `whisper-large-v3` | Groq speech-to-text model used for AI lyrics. |
+| `GROQ_TEXT_MODEL` | `openai/gpt-oss-20b` | Groq text model used for description and transcript formatting. |
+| `GROQ_MAX_AUDIO_SECONDS` | `600` | Hard limit for AI transcription (30–600 seconds). |
 | `YTDLP_COOKIES_FILE` | — | Path to a Netscape `cookies.txt` for your own account. |
 | `YTDLP_PROXY` | — | Proxy used by yt-dlp, e.g. `http://user:pass@host:8080`. |
 | `FFMPEG_BINARY` | auto | Explicit ffmpeg path. |
@@ -319,6 +329,8 @@ because the app is expected to run on loopback.
 | `GET` | `/preview/stream?url=…` | Small inline-playable rendition for the `<video>` player. |
 | `GET` | `/api/info?url=…` | JSON metadata and all video/audio options. |
 | `GET` | `/api/prepare` | Validate a download choice; returns a plan, token and URL. |
+| `GET` | `/api/lyrics?url=…&ai=1` | Resolve lyrics once (description, LRCLIB, then optional Groq) and cache the result. |
+| `GET` | `/api/tags?url=…` | Suggest missing tags from facts stated in the description. |
 | `GET` | `/api/progress/{token}` | Snapshot for one download. |
 | `GET` | `/download` | Stream the selected media. |
 | `GET` | `/health` | Status, versions, ffmpeg and cookie state. |
@@ -377,6 +389,8 @@ Example response:
 | `format_id` | yt-dlp format id | Explicit audio stream selection. |
 | `embed_tags` | `true` \| `false` | Audio tags, default `true`. |
 | `embed_cover` | `true` \| `false` | Cover art, default `true`. |
+| `ai_lyrics` | `true` \| `false` | Use the cached Groq lyrics result when free sources found nothing. |
+| `ai_tags` | `true` \| `false` | Fill empty tag fields from the description with AI. |
 | `token` | up to 64 chars | Enables progress tracking. |
 | `title`, `artist`, `album`, `composer`, `genre`, `year`, `track`, `disc`, `copyright`, `publisher`, `isrc` | text | Override derived metadata. |
 
@@ -452,12 +466,51 @@ trimmed to 240. The "Original stream" audio option stays byte-for-byte untouched
 and gets no tags.
 
 The preview page runs the same lookup before a download starts. Each audio card
-shows **Lyrics** when a block or LRCLIB match exists and **No lyrics** otherwise,
-next to **Cover art** / **No cover**. Clicking a download opens a confirmation
-panel with the filename, quality, size and the lyrics or subtitle/caption status;
-nothing is streamed until **Confirm download** is pressed. Video links list
-manual subtitles and auto-generated captions, but captions are not burned into
-the file.
+shows **Synced lyrics**, **Lyrics** or **No lyrics** when a block or LRCLIB match
+is available, next to **Cover art** / **No cover**. Clicking a download opens a
+confirmation panel with the filename, quality, size and the lyrics or
+subtitle/caption status; nothing is streamed until **Confirm download** is
+pressed. Video links list manual subtitles and auto-generated captions, but
+captions are not burned into the file.
+
+### Optional AI lyrics and tags
+
+The audio tab has two opt-in checkboxes. Nothing is sent to Groq unless one is
+ticked, and the API key never reaches the browser.
+
+- **AI lyrics** is a fallback for songs with no description block and no LRCLIB
+  match. ReelRelay first asks Groq `openai/gpt-oss-20b` whether the description
+  contains verbatim lyrics; a candidate is accepted only when its lines actually
+  appear in the description. Otherwise it extracts up to 10 minutes of mono
+  audio locally with ffmpeg and transcribes it with `whisper-large-v3`. Timed
+  Whisper segments become LRC lines, and the text model may add punctuation and
+  capitalization but may not add, remove, translate or paraphrase words. If a
+  formatted segment changes the recognized words, the raw transcript is kept.
+- **Fill missing tags with AI** reads only the description. It can fill album,
+  year, composer, genre, track, disc, copyright, publisher and ISRC, but only
+  when the value is explicitly present (genre may be a clearly marked
+  inference). Existing fields are never overwritten.
+
+The result is cached in memory for the server session, including "no lyrics",
+so reopening the confirmation dialog or clicking Download does not call Groq
+again. Audio longer than `GROQ_MAX_AUDIO_SECONDS` (10 minutes) and video
+downloads never use AI. If ffmpeg or `GROQ_API_KEY` is missing, the checkboxes
+stay disabled and the audio download still works normally.
+
+```ini
+GROQ_API_KEY=gsk_your_key_here
+# optional
+GROQ_WHISPER_MODEL=whisper-large-v3
+GROQ_TEXT_MODEL=openai/gpt-oss-20b
+REELRELAY_AI_LYRICS=true
+REELRELAY_LYRICS_SYNCED=true
+```
+
+Synchronized lyrics are written for players that support them: MP3 keeps a
+plain `USLT` field, adds a timed `SYLT` frame and stores the LRC text in
+`TXXX:LYRICS` for foobar2000-style plugins. FLAC keeps `LYRICS` (timed) plus
+`UNSYNCEDLYRICS` (plain), and M4A writes the LRC text to `©lyr`. Set
+`REELRELAY_LYRICS_SYNCED=false` to store plain text only.
 
 ### Concurrency and caching
 
@@ -641,6 +694,9 @@ python health_check.py
   `YTDLP_COOKIES_FILE`, never logged, and never written into the repository.
 - **Credential hygiene.** `.env` and cookie files are git-ignored. Use a
   throwaway account for authenticated tests.
+- **Optional AI is opt-in.** Groq is contacted only when an AI checkbox is
+  ticked. Audio or description text is sent to Groq for that request; the key
+  is read from `.env`, used server-side only, and never returned to the browser.
 - **Dependency updates.** Dependabot watches pip and GitHub Actions; yt-dlp
   should be updated regularly because platforms change often.
 

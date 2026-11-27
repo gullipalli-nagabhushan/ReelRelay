@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from core import config
+from core import ai_lyrics, config, lyrics
 from core.download import _ffmpeg_input, _metadata_args, build_plan, plan_preview
 from core.ytdlp import (
     UnavailableError,
@@ -295,6 +295,74 @@ def test_plan_reports_subtitles_for_video(
     assert plan.captions["manual_count"] == 1
     assert plan.captions["automatic_count"] == 1
     assert "Manual subtitles: English" in plan.summary()["captions"]["label"]
+
+
+def test_plan_audio_can_use_a_cached_ai_transcript(
+    sample_info: dict, ffmpeg_enabled: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sample_info["description"] = ""
+    result = lyrics.Result(
+        source=lyrics.SOURCE_AI_AUDIO,
+        plain="First line\nSecond line",
+        synced="[00:01.00]First line\n[00:05.00]Second line",
+    )
+    monkeypatch.setattr(ai_lyrics, "resolve", lambda *args, **kwargs: (result, True))
+
+    plan = build_plan(
+        sample_info, kind="audio", profile="flac", use_ai_lyrics=True
+    )
+
+    assert plan.tags["lyrics"] == result.plain
+    assert plan.synced_lyrics == result.synced
+    assert plan.lyrics["synchronized"] is True
+    assert plan.lyrics["embedded"] is True
+    assert "Synchronized lyrics are embedded." in plan.notes
+
+
+def test_plan_audio_ai_tags_only_fill_empty_fields(
+    sample_info: dict, ffmpeg_enabled: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        ai_lyrics,
+        "enrich_tags",
+        lambda info, existing: (
+            {"publisher": "RCA Records"},
+            {"publisher": {"value": "RCA Records", "inferred": False}},
+            [],
+        ),
+    )
+
+    plan = build_plan(
+        sample_info,
+        kind="audio",
+        profile="mp3_320",
+        tags={"album": "User album"},
+        use_ai_tags=True,
+    )
+
+    assert plan.tags["album"] == "User album"
+    assert plan.tags["publisher"] == "RCA Records"
+    assert plan.tags["genre"] == "Music"
+    assert plan.ai_tags["publisher"]["inferred"] is False
+    assert "Missing tags were filled from the description with AI." in plan.notes
+
+
+def test_plan_audio_original_skips_ai_tag_lookup(
+    sample_info: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(*args, **kwargs):
+        raise AssertionError("the original stream cannot embed AI tags")
+
+    monkeypatch.setattr(ai_lyrics, "enrich_tags", fail)
+    plan = build_plan(
+        sample_info,
+        kind="audio",
+        profile="original",
+        format_id="140",
+        use_ai_tags=True,
+    )
+
+    assert plan.ai_tags == {}
 
 
 def test_metadata_args_keep_lyrics_and_bound_other_fields() -> None:

@@ -9,6 +9,21 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- Optional AI lyrics and tag enrichment in the web app, powered by Groq and
+  disabled unless a checkbox is ticked. `whisper-large-v3` transcribes up to
+  10 minutes of audio and returns timed LRC lines; `openai/gpt-oss-20b` checks
+  the description for verbatim lyrics, formats the transcript without inventing
+  words, and fills missing tags only from facts stated in the description.
+  Results (including "no lyrics") are cached for the server session, retries are
+  bounded, and the API key stays server-side. Add `GROQ_API_KEY` to `.env` to
+  enable the controls; without it the audio download behaves exactly as before.
+- Synchronized lyrics across players. MP3 now keeps a plain `USLT` and adds a
+  timed `SYLT` frame plus `TXXX:LYRICS`; FLAC writes timed `LYRICS` alongside
+  plain `UNSYNCEDLYRICS`, and M4A stores LRC in `©lyr`. Plain lyrics remain the
+  fallback, and `REELRELAY_LYRICS_SYNCED=false` restores plain-only output.
+- `GET /api/lyrics` resolves lyrics once for the preview and caches the outcome;
+  `GET /api/tags` previews description-derived tag suggestions. `/api/prepare`
+  and `/download` accept `ai_lyrics` and `ai_tags` and reuse the same cache.
 - Lyrics and complete audio identifiers in the web app. Audio downloads now
   embed the video description's lyrics block, or a title/artist/duration-matched
   plain-text result from LRCLIB for music links, in MP3 (`USLT`), FLAC
